@@ -1,21 +1,129 @@
-(ib_trade) PS C:\Users\user\OneDrive\projects\IB_Trading_System> python .\examples\ibot.py
-2104
-Market data farm connection is OK:usfarm.nj
-2104
-Market data farm connection is OK:usfuture
-2104
-Market data farm connection is OK:cashfarm
-2104
-Market data farm connection is OK:usfarm
-2106
-HMDS data farm connection is OK:ushmds
-2158
-Sec-def data farm connection is OK:secdefil
-Enter the symbol you want to trade : 2104
-Market data farm connection is OK:usopt
-2104
-Market data farm connection is OK:eufarmnj
-nvda
-Enter the barsize you want to trade in minutes : 5
-162
-Historical Market Data Service error message:Trading TWS session is connected from a different IP address
+(ib_trade) PS C:\Users\user\OneDrive\projects\IB_Trading_System> python .\code\src\main.py    
+INFO: Market data farm connection is OK:usfarm.nj
+INFO: Market data farm connection is OK:usfuture
+INFO: Market data farm connection is OK:cashfarm
+INFO: Market data farm connection is OK:usfarm
+INFO: HMDS data farm connection is OK:ushmds
+INFO: Sec-def data farm connection is OK:secdefil
+=== FULL ACCOUNT DATA ===
+AccountCode: DUH542059
+AccountOrGroup: DUH542059
+AccountReady: true
+AccountType: INDIVIDUAL
+AccruedCash: 0.0
+AccruedCash-P: 0.0
+AccruedCash-S: 454.73
+AccruedDividend: 0.0
+AccruedDividend-P: 0.0
+AccruedDividend-S: 0.0
+AvailableFunds: 1007848.36
+AvailableFunds-P: 0.0
+AvailableFunds-S: 1007848.36
+Billable: 0.0
+Billable-P: 0.0
+Billable-S: 0.0
+BuyingPower: 6718989.09
+CashBalance: 918.57
+ColumnPrio-P: 5.0
+ColumnPrio-S: 1.0
+CorporateBondValue: 0.0
+Cryptocurrency: 0.0
+Currency: USD
+Cushion: 1.0
+EquityWithLoanValue: 1007848.36
+EquityWithLoanValue-P: 0.0
+EquityWithLoanValue-S: 1007848.36
+ExcessLiquidity: 1007848.36
+ExcessLiquidity-P: 0.0
+ExcessLiquidity-S: 1007848.36
+ExchangeRate: 7.77602
+FullAvailableFunds: 1007848.36
+FullAvailableFunds-P: 0.0
+FullAvailableFunds-S: 1007848.36
+FullExcessLiquidity: 1007848.36
+FullExcessLiquidity-P: 0.0
+FullExcessLiquidity-S: 1007848.36
+FullInitMarginReq: 0.0
+FullInitMarginReq-P: 0.0
+FullInitMarginReq-S: 0.0
+FullMaintMarginReq: 0.0
+FullMaintMarginReq-P: 0.0
+FullMaintMarginReq-S: 0.0
+FundValue: 0.0
+FutureOptionValue: 0.0
+FuturesPNL: 0.0
+FxCashBalance: 0.0
+GrossPositionValue: 0.0
+GrossPositionValue-S: 0.0
+Guarantee: 0.0
+Guarantee-P: 0.0
+Guarantee-S: 0.0
+IncentiveCoupons: 0.0
+IncentiveCoupons-P: 0.0
+IncentiveCoupons-S: 0.0
+IndianStockHaircut: 0.0
+IndianStockHaircut-P: 0.0
+IndianStockHaircut-S: 0.0
+InitMarginReq: 0.0
+InitMarginReq-P: 0.0
+InitMarginReq-S: 0.0
+IssuerOptionValue: 0.0
+Leverage-S: 0.0
+LookAheadAvailableFunds: 1007848.36
+LookAheadAvailableFunds-P: 0.0
+LookAheadAvailableFunds-S: 1007848.36
+LookAheadExcessLiquidity: 1007848.36
+LookAheadExcessLiquidity-P: 0.0
+LookAheadExcessLiquidity-S: 1007848.36
+LookAheadInitMarginReq: 0.0
+LookAheadInitMarginReq-P: 0.0
+LookAheadInitMarginReq-S: 0.0
+LookAheadMaintMarginReq: 0.0
+LookAheadMaintMarginReq-P: 0.0
+LookAheadMaintMarginReq-S: 0.0
+LookAheadNextChange: 0.0
+MaintMarginReq: 0.0
+MaintMarginReq-P: 0.0
+MaintMarginReq-S: 0.0
+MoneyMarketFundValue: 0.0
+MutualFundValue: 0.0
+NLVAndMarginInReview: false
+NetDividend: 0.0
+NetLiquidation: 1007848.36
+NetLiquidation-P: 0.0
+NetLiquidation-S: 1007848.36
+NetLiquidationByCurrency: 918.57
+NetLiquidationUncertainty: 0.0
+OptionMarketValue: 0.0
+PASharesValue: 0.0
+PASharesValue-P: 0.0
+PASharesValue-S: 0.0
+PhysicalCertificateValue: 0.0
+PhysicalCertificateValue-P: 0.0
+PhysicalCertificateValue-S: 0.0
+PostExpirationExcess: 0.0
+PostExpirationExcess-P: 0.0
+PostExpirationExcess-S: 0.0
+PostExpirationMargin: 0.0
+PostExpirationMargin-P: 0.0
+PostExpirationMargin-S: 0.0
+RealCurrency: USD
+RealizedPnL: 0.0
+SegmentTitle-P: Crypto at Paxos
+SegmentTitle-S: Securities
+StockMarketValue: 0.0
+TBillValue: 0.0
+TBondValue: 0.0
+TotalCashBalance: 918.57
+TotalCashValue: 1007393.63
+TotalCashValue-P: 0.0
+TotalCashValue-S: 1007393.63
+TotalDebitCardPendingCharges: 0.0
+TotalDebitCardPendingCharges-P: 0.0
+TotalDebitCardPendingCharges-S: 0.0
+TradingType-S: STKNOPT
+UnrealizedPnL: 0.0
+WarrantValue: 0.0
+=========================
+
+It shows this and is then stuck at here, did not print out anything, did not trade anything. Please make it print out steps by steps so that we know which step the program is stuck at.

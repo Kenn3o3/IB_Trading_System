@@ -1,214 +1,417 @@
 Directory Structure:
-└── /
-    ├── ibot.py
+└── code/
+    └── config/
+        ├── config.json
+    └── src/
+        ├── main.py
+        └── ibkr_client/
+            ├── ibkr_api.py
+        └── risk_management/
+            ├── risk_manager.py
+        └── strategies/
+            ├── sma_crossover.py
+            ├── strategy_base.py
+        └── utils/
+            ├── market_hours.py
 
 File Contents:
 
-# .\examples\ibot.py content:
+# code\config\config.json content:
 
-    {
-#Imports
-import ibapi
+    ```
+{
+    "ibkr": {
+        "host": "127.0.0.1",
+        "port": 7497,
+        "client_id": 1
+    },
+    "stocks": {
+        "NorthAmerica": ["NVDA"],
+        "AsiaHK": []
+    },
+    "risk_parameters": {
+        "max_position_size": 0.05,
+        "max_daily_loss": 0.02,
+        "order_size": 0.1
+    }
+}
+
+    ```
+
+# code\src\main.py content:
+
+    ```
+import pytz
+from apscheduler.schedulers.blocking import BlockingScheduler
+from datetime import datetime
+# Adjust imports to match your folder structure
+from ibkr_client.ibkr_api import IBKRClient, load_config
+from strategies.sma_crossover import SMACrossoverStrategy
+from risk_management.risk_manager import RiskManager
+from utils.market_hours import MarketHoursChecker
+
+def main():
+    config = load_config()
+    ibkr_client = IBKRClient()
+    account_data = ibkr_client.get_account_data()
+    print("=== FULL ACCOUNT DATA ===")
+    for k, v in account_data.items():
+        print(f"{k}: {v}")
+    print("=========================")
+    risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
+    market_hours = MarketHoursChecker()
+    config['stocks'] = {"NorthAmerica": ["NVDA"]}
+    strategies = []
+    for region, symbols in config['stocks'].items():
+        exchange = 'SMART' if region == 'NorthAmerica' else 'SEHK'
+        for symbol in config['stocks']['NorthAmerica']:
+            strategy = SMACrossoverStrategy(
+                symbol=symbol,
+                exchange="NorthAmerica",
+                risk_manager=risk_manager
+            )
+            strategies.append(strategy)
+    scheduler = BlockingScheduler()
+    for strategy in strategies:
+        scheduler.add_job(
+            strategy_check,
+            'cron',
+            day_of_week='mon-fri',
+            hour='*',
+            minute='*/5',
+            args=[strategy, market_hours, ibkr_client]
+        )
+    scheduler.start()
+
+def strategy_check(strategy, market_hours, ibkr_client):
+    if market_hours.is_market_open(strategy.exchange):
+        bars = ibkr_client.get_realtime_bars(strategy.symbol)
+        for bar in bars:
+            strategy.on_bar(bar)
+
+if __name__ == "__main__":
+    main()
+    ```
+
+# code\src\ibkr_client\ibkr_api.py content:
+
+    ```
+import threading
+import time
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
-from ibapi.order import *
-import ta
-import numpy as np
-import pandas as pd
-import pytz
-import math
-from datetime import datetime, timedelta
-import threading
-import time
-#Vars
-orderId = 1
-#Class for Interactive Brokers Connection
-class IBApi(EWrapper,EClient):
+from ibapi.account_summary_tags import AccountSummaryTags
+
+def load_config():
+    # NOTE: Provide the actual implementation or import from a shared config loader
+    import json
+    with open("code/config/config.json", "r") as f:
+        return json.load(f)
+
+class IBKRConnection(EWrapper, EClient):
     def __init__(self):
         EClient.__init__(self, self)
-    # Historical Backtest Data
-    def historicalData(self, reqId, bar):
+        self.account_data = {}
+        self.positions = {}
+        self.reqId = 1
+        self.next_order_id = None
+        self.account_data_ready = threading.Event()
+
+    def nextValidId(self, orderId):
+        self.next_order_id = orderId
+
+    def updateAccountValue(self, key, value, currency, accountName):
+        """
+        Store each key/value in a dictionary for later use/printing.
+        Example keys: 'AvailableFunds', 'NetLiquidation', 'BuyingPower', etc.
+        """
         try:
-            bot.on_bar_update(reqId,bar,False)
-        except Exception as e:
-            print(e)
-    # On Realtime Bar after historical data finishes
-    def historicalDataUpdate(self, reqId, bar):
-        try:
-            bot.on_bar_update(reqId,bar,True)
-        except Exception as e:
-            print(e)
-    # On Historical Data End
-    def historicalDataEnd(self, reqId, start, end):
-        print(reqId)
-    # Get next order id we can use
-    def nextValidId(self, nextorderId):
-        global orderId
-        orderId = nextorderId
-    # Listen for realtime bars
-    def realtimeBar(self, reqId, time, open_, high, low, close,volume, wap, count):
-        super().realtimeBar(reqId, time, open_, high, low, close, volume, wap, count)
-        try:
-            bot.on_bar_update(reqId, time, open_, high, low, close, volume, wap, count)
-        except Exception as e:
-            print(e)
-    def error(self, id, errorCode, errorMsg):
-        print(errorCode)
-        print(errorMsg)
-#Bar Object
-class Bar:
-    open = 0
-    low = 0
-    high = 0
-    close = 0
-    volume = 0
-    date = datetime.now()
+            # Attempt to store as float if numeric
+            self.account_data[key] = float(value)
+        except ValueError:
+            # Otherwise, store as string
+            self.account_data[key] = value
+        if key == "NetLiquidation":  # Final key in updates
+            self.account_data_ready.set()
+    def position(self, account, contract, pos, avgCost):
+        self.positions[contract.symbol] = {
+            'position': pos,
+            'avg_cost': avgCost
+        }
+    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
+        if errorCode in [2104, 2106, 2158]:
+            print(f"INFO: {errorString}")  # Demote to informational message
+        else:
+            print(f"ERROR: Code {errorCode} - {errorString}")
+
+class IBKRClient:
     def __init__(self):
-        self.open = 0
-        self.low = 0
-        self.high = 0
-        self.close = 0
-        self.volume = 0
-        self.date = datetime.now()
-#Bot Logic
-class Bot:
-    ib = None
-    barsize = 1
-    currentBar = Bar()
-    bars = []
-    reqId = 1
-    global orderId
-    smaPeriod = 50
-    symbol = ""
-    initialbartime = datetime.now().astimezone(pytz.timezone("America/New_York"))
-    def __init__(self):
-        #Connect to IB on init
-        self.ib = IBApi()
-        self.ib.connect("127.0.0.1", 7496,1)
-        ib_thread = threading.Thread(target=self.run_loop, daemon=True)
+        self.conn = IBKRConnection()
+        self._connect()
+
+    def _connect(self):
+        config = load_config()
+        self.conn.connect(
+            config['ibkr']['host'],
+            config['ibkr']['port'],
+            config['ibkr']['client_id']
+        )
+        ib_thread = threading.Thread(target=self._run_loop, daemon=True)
         ib_thread.start()
         time.sleep(1)
-        currentBar = Bar()
-        #Get symbol info
-        self.symbol = input("Enter the symbol you want to trade : ")
-        #Get bar size
-        self.barsize = int(input("Enter the barsize you want to trade in minutes : "))
-        mintext = " min"
-        if (int(self.barsize) > 1):
-            mintext = " mins"
-        queryTime = (datetime.now().astimezone(pytz.timezone("America/New_York"))-timedelta(days=1)).replace(hour=16,minute=0,second=0,microsecond=0).strftime("%Y%m%d %H:%M:%S")
-        #Create our IB Contract Object
-        contract = Contract()
-        contract.symbol = self.symbol.upper()
-        contract.secType = "STK"
-        contract.exchange = "SMART"
-        contract.currency = "USD"
-        self.ib.reqIds(-1)
-        # Request Market Data
-        #self.ib.reqRealTimeBars(0, contract, 5, "TRADES", 1, [])
-        self.ib.reqHistoricalData(self.reqId,contract,"","2 D",str(self.barsize)+mintext,"TRADES",1,1,True,[])
-    #Listen to socket in seperate thread
-    def run_loop(self):
-        self.ib.run()
-    #Bracet Order Setup
-    def bracketOrder(self, parentOrderId, action, quantity, profitTarget, stopLoss):
-        #Initial Entry
-        #Create our IB Contract Object
-        contract = Contract()
-        contract.symbol = self.symbol.upper()
-        contract.secType = "STK"
-        contract.exchange = "SMART"
-        contract.currency = "USD"
-        # Create Parent Order / Initial Entry
-        parent = Order()
-        parent.orderId = parentOrderId
-        parent.orderType = "MKT"
-        parent.action = action
-        parent.totalQuantity = quantity
-        parent.transmit = False
-        # Profit Target
-        profitTargetOrder = Order()
-        profitTargetOrder.orderId = parent.orderId+1
-        profitTargetOrder.orderType = "LMT"
-        profitTargetOrder.action = "SELL"
-        profitTargetOrder.totalQuantity = quantity
-        profitTargetOrder.lmtPrice = round(profitTarget,2)
-        profitTargetOrder.parentId = parentOrderId
-        profitTargetOrder.transmit = False
-        # Stop Loss
-        stopLossOrder = Order()
-        stopLossOrder.orderId = parent.orderId+2
-        stopLossOrder.orderType = "STP"
-        stopLossOrder.action = "SELL"
-        stopLossOrder.totalQuantity = quantity
-        stopLossOrder.parentId = parentOrderId
-        stopLossOrder.auxPrice = round(stopLoss,2)
-        stopLossOrder.transmit = True
+        self._request_account_data()
 
-        bracketOrders = [parent, profitTargetOrder, stopLossOrder]
-        return bracketOrders
-    #Pass realtime bar data back to our bot object
-    def on_bar_update(self, reqId, bar,realtime):
-        global orderId
-        #Historical Data to catch up
-        if (realtime == False):
-            self.bars.append(bar)
+    def _run_loop(self):
+        self.conn.run()
+
+    def _request_account_data(self):
+        # Request account values & positions
+        # self.conn.reqMarketDataType(3)
+        self.conn.reqAccountUpdates(True, "")
+        self.conn.reqPositions()
+        self.conn.account_data_ready.wait(timeout=10)
+
+    def get_account_data(self):
+        """
+        Returns the entire account_data dictionary.
+        """
+        return self.conn.account_data
+
+    def get_positions(self):
+        """
+        Returns the positions dictionary.
+        """
+        return self.conn.positions
+
+    def get_realtime_bars(self, symbol):
+        """
+        Placeholder for real-time bar data retrieval.
+        You would implement TWS API calls here.
+        """
+        # For illustration, returning a mock bar
+        # In production, you'd subscribe to real-time bars from IBKR
+        class Bar:
+            def __init__(self, open, high, low, close, volume):
+                self.open = open
+                self.high = high
+                self.low = low
+                self.close = close
+                self.volume = volume
+
+        return [Bar(200.0, 202.0, 198.0, 201.0, 10000)]
+    def _handle_data_farm_disconnect(self):
+        print("Reconnecting to market data...")
+        self._request_account_data()  # Re-request account/positions
+        # Re-subscribe to real-time data streams here
+    ```
+
+# code\src\risk_management\risk_manager.py content:
+
+    ```
+class RiskManager:
+    def __init__(self, ibkr_client, config):
+        self.ibkr_client = ibkr_client
+        self.config = config
+
+    def approve_order(self, symbol, action):
+        account_data = self.ibkr_client.get_account_data()
+        positions = self.ibkr_client.get_positions()
+
+        # Check available cash (if action is BUY, ensure we have positive funds).
+        if action == 'BUY':
+            usable_cash = account_data.get('AvailableFunds', 0)  # IB often labels 'AvailableFunds'
+            if usable_cash <= 0:
+                return False
+
+        # Check net liquidation if available
+        net_liq = account_data.get('NetLiquidation', 0)
+        max_size = self.config['max_position_size'] * net_liq
+
+        # Current position
+        current_position = positions.get(symbol, {}).get('position', 0)
+
+        if action == 'BUY' and current_position >= max_size:
+            return False
+        if action == 'SELL':
+            # Even if we hold 0, a SELL will open a short if the broker allows
+            # But if you want to limit how big the short can get, also check abs(current_position)
+            if abs(current_position) >= max_size:
+                return False
+
+        return True
+
+    ```
+
+# code\src\strategies\sma_crossover.py content:
+
+    ```
+import pandas as pd
+import ta
+from .strategy_base import TradingStrategy  # <-- Add this line
+
+class SMACrossoverStrategy(TradingStrategy):
+    def __init__(self, symbol, exchange, risk_manager, short_period=50, long_period=200):
+        super().__init__(symbol, exchange, risk_manager)
+        self.short_period = short_period
+        self.long_period = long_period
+        self.historical_data = pd.DataFrame()
+
+    def on_bar(self, bar):
+        self.historical_data = self.historical_data.append({
+            'open': bar.open,
+            'high': bar.high,
+            'low': bar.low,
+            'close': bar.close,
+            'volume': bar.volume
+        }, ignore_index=True)
+
+        if len(self.historical_data) > self.long_period:
+            self.historical_data['sma_short'] = ta.trend.sma_indicator(
+                self.historical_data['close'], self.short_period
+            )
+            self.historical_data['sma_long'] = ta.trend.sma_indicator(
+                self.historical_data['close'], self.long_period
+            )
+
+            if self._cross_above():
+                if self.risk_manager.approve_order(self.symbol, 'BUY'):
+                    self._place_order('BUY')
+            elif self._cross_below():
+                if self.risk_manager.approve_order(self.symbol, 'SELL'):
+                    self._place_order('SELL')
+
+    def _cross_above(self):
+        return (
+            self.historical_data['sma_short'].iloc[-2] <
+            self.historical_data['sma_long'].iloc[-2]
+        ) and (
+            self.historical_data['sma_short'].iloc[-1] >
+            self.historical_data['sma_long'].iloc[-1]
+        )
+
+    def _cross_below(self):
+        return (
+            self.historical_data['sma_short'].iloc[-2] >
+            self.historical_data['sma_long'].iloc[-2]
+        ) and (
+            self.historical_data['sma_short'].iloc[-1] <
+            self.historical_data['sma_long'].iloc[-1]
+        )
+
+    def _place_order(self, action):
+        """Placeholder for placing an actual IB order."""
+        print(f"[DEBUG] Placing {action} order on {self.symbol}.")
+
+    ```
+
+# code\src\strategies\strategy_base.py content:
+
+    ```
+from abc import ABC, abstractmethod
+
+class TradingStrategy(ABC):
+    def __init__(self, symbol, exchange, risk_manager):
+        self.symbol = symbol
+        self.exchange = exchange
+        self.risk_manager = risk_manager
+        
+    @abstractmethod
+    def on_bar(self, bar):
+        pass
+    ```
+
+# code\src\utils\market_hours.py content:
+
+    ```
+# code/src/utils/market_hours.py
+
+from datetime import datetime, time
+import pytz
+from dateutil import parser
+
+class MarketHoursChecker:
+    def __init__(self):
+        self.holidays = {  # Basic holiday template (expand as needed)
+            'NorthAmerica': [
+                '2024-01-01',  # New Year's
+                '2024-01-15',  # MLK Day
+                '2024-02-19',  # Presidents Day
+                # Add other NYSE holidays
+            ],
+            'AsiaHK': [
+                '2024-01-01',  # New Year
+                '2024-02-10',  # Lunar New Year
+                # Add other HKEX holidays
+            ]
+        }
+        
+    def is_market_open(self, exchange: str) -> bool:
+        """Check if market is open based on exchange and current time."""
+        now = datetime.now(pytz.utc)
+        
+        if exchange == "NorthAmerica":
+            return self._is_nyse_open(now)
+        elif exchange == "AsiaHK":
+            return self._is_hkex_open(now)
         else:
-            bartime = datetime.strptime(bar.date,"%Y%m%d %H:%M:%S").astimezone(pytz.timezone("America/New_York"))
-            minutes_diff = (bartime-self.initialbartime).total_seconds() / 60.0
-            self.currentBar.date = bartime
-            lastBar = self.bars[len(self.bars)-1]
-            #On Bar Close
-            if (minutes_diff > 0 and math.floor(minutes_diff) % self.barsize == 0):
-                self.initialbartime = bartime
-                #Entry - If we have a higher high, a higher low and we cross the 50 SMA Buy
-                #1.) SMA
-                closes = []
-                for bar in self.bars:
-                    closes.append(bar.close)
-                self.close_array = pd.Series(np.asarray(closes))
-                self.sma = ta.trend.sma(self.close_array,self.smaPeriod,True)
-                print("SMA : " + str(self.sma[len(self.sma)-1]))
-                #2.) Calculate Higher Highs and Lows
-                lastLow = self.bars[len(self.bars)-1].low
-                lastHigh = self.bars[len(self.bars)-1].high
-                lastClose = self.bars[len(self.bars)-1].close
+            raise ValueError(f"Unsupported exchange: {exchange}")
 
-                # Check Criteria
-                if (bar.close > lastHigh
-                    and self.currentBar.low > lastLow
-                    and bar.close > str(self.sma[len(self.sma)-1])
-                    and lastClose < str(self.sma[len(self.sma)-2])):
-                    #Bracket Order 2% Profit Target 1% Stop Loss
-                    profitTarget = round(bar.close * 1.02, 2)
-                    stopLoss = round(bar.close * 0.99, 2)
-                    quantity = 1
-                    bracket = self.bracketOrder(orderId,"BUY",quantity, profitTarget, stopLoss)
-                    contract = Contract()
-                    contract.symbol = self.symbol.upper()
-                    contract.secType = "STK"
-                    contract.exchange = "SMART"
-                    contract.currency = "USD"
-                    #Place Bracket Order
-                    for o in bracket:
-                        o.ocaGroup = "OCA_"+str(orderId)
-                        self.ib.placeOrder(o.orderId,contract,o)
-                    orderId += 3
-                #Bar closed append
-                self.currentBar.close = bar.close
-                print("New bar!")
-                self.bars.append(self.currentBar)
-                self.currentBar = Bar()
-                self.currentBar.open = bar.open
-        #Build  realtime bar
-        if (self.currentBar.open == 0):
-            self.currentBar.open = bar.open
-        if (self.currentBar.high == 0 or bar.high > self.currentBar.high):
-            self.currentBar.high = bar.high
-        if (self.currentBar.low == 0 or bar.low < self.currentBar.low):
-            self.currentBar.low = bar.low
+    def _is_nyse_open(self, dt: datetime) -> bool:
+        """NYSE trading hours 9:30 AM - 4:00 PM ET, Mon-Fri"""
+        et = dt.astimezone(pytz.timezone('America/New_York'))
+        
+        # Check weekday
+        if et.weekday() >= 5:  # Saturday(5) or Sunday(6)
+            return False
+            
+        # Check holidays
+        date_str = et.strftime('%Y-%m-%d')
+        if date_str in self.holidays['NorthAmerica']:
+            return False
+            
+        # Check time
+        market_open = time(9, 30)
+        market_close = time(16, 0)
+        return market_open <= et.time() <= market_close
 
-#Start Bot
-bot = Bot()
-    }
+    def _is_hkex_open(self, dt: datetime) -> bool:
+        """HKEX trading hours 9:30 AM - 4:00 PM HKT, Mon-Fri"""
+        hkt = dt.astimezone(pytz.timezone('Asia/Hong_Kong'))
+        
+        if hkt.weekday() >= 5:
+            return False
+            
+        date_str = hkt.strftime('%Y-%m-%d')
+        if date_str in self.holidays['AsiaHK']:
+            return False
+            
+        market_open = time(9, 30)
+        market_close = time(16, 0)
+        return market_open <= hkt.time() <= market_close
+
+    def add_custom_holiday(self, exchange: str, date_str: str):
+        """Add custom holiday dates (YYYY-MM-DD format)"""
+        try:
+            parsed_date = parser.parse(date_str).date()
+            self.holidays[exchange].append(date_str)
+        except ValueError:
+            raise ValueError(f"Invalid date format: {date_str}. Use YYYY-MM-DD")
+    def is_market_open(self, exchange: str) -> bool:
+        # Map IBKR exchange codes to regions
+        exchange_region_map = {
+            "SMART": "NorthAmerica",  # Assuming SMART is used for North American stocks
+            "NYSE": "NorthAmerica",
+            "NASDAQ": "NorthAmerica",
+            "HKEX": "AsiaHK"
+        }
+        region = exchange_region_map.get(exchange, exchange)
+        if region not in ["NorthAmerica", "AsiaHK"]:
+            raise ValueError(f"Unsupported exchange: {exchange}")
+        
+        # Rest of the method remains the same
+        if region == "NorthAmerica":
+            return self._is_nyse_open(now)
+        elif region == "AsiaHK":
+            return self._is_hkex_open(now)
+    ```

@@ -5,8 +5,8 @@
         "client_id": 1
     },
     "stocks": {
-        "NorthAmerica": ["AAPL", "NVDA"],
-        "AsiaHK": ["0700", "0001"]
+        "NorthAmerica": ["NVDA"],
+        "AsiaHK": []
     },
     "risk_parameters": {
         "max_position_size": 0.05,

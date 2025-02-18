@@ -9,6 +9,8 @@ def log_message(message, log_file):
 def print_tree_structure(parent_dir, log_file):
     # Function to recursively print the file structure without printing the content
     for root, dirs, files in os.walk(parent_dir):
+        # Remove __pycache__ directories from the list of directories to traverse
+        dirs[:] = [d for d in dirs if d != '__pycache__']
         # Determine the level of the current directory in the tree
         level = root.replace(parent_dir, '').count(os.sep)
         indent = ' ' * 4 * level
@@ -32,12 +34,12 @@ def print_file_content(file_path, log_file):
             file_message = f"\n# {file_path} content:\n"
             print(file_message)
             log_message(file_message, log_file)
-            print(f"{' ' * 4}{{")
-            log_message(f"{' ' * 4}{{", log_file)
+            print(f"    ```")
+            log_message(f"    ```", log_file)
             print(content)
             log_message(content, log_file)
-            print(f"{' ' * 4}}}")
-            log_message(f"{' ' * 4}}}", log_file)
+            print(f"    ```")
+            log_message(f"    ```", log_file)
     except Exception as e:
         error_message = f"{' ' * 4}Error reading {file_path}: {str(e)}"
         print(error_message)
@@ -53,6 +55,8 @@ def print_full_tree_and_contents(parent_dir, log_file):
     print("\nFile Contents:")
     log_message("\nFile Contents:", log_file)
     for root, dirs, files in os.walk(parent_dir):
+        # Remove __pycache__ directories from the list of directories to traverse
+        dirs[:] = [d for d in dirs if d != '__pycache__']
         for file in files:
             file_path = os.path.join(root, file)
             print_file_content(file_path, log_file)
