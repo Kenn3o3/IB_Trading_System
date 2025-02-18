@@ -1,0 +1,243 @@
+
+"""
+here is the folder structure and the corresponding file content in each folder:
+```
+Directory Structure:
+└── code/
+    └── config/
+        ├── config.json
+    └── src/
+        ├── main.py
+        └── ibkr_client/
+            ├── ibkr_api.py
+        └── risk_management/
+            ├── risk_manager.py
+        └── strategies/
+            ├── sma_crossover.py
+            ├── strategy_base.py
+        └── utils/
+
+File Contents:
+
+# code\config\config.json content:
+
+    {
+{
+    "ibkr": {
+        "host": "127.0.0.1",
+        "port": 7496,
+        "client_id": 1
+    },
+    "stocks": {
+        "NorthAmerica": ["AAPL", "NVDA"],
+        "AsiaHK": ["0700", "0001"]
+    },
+    "risk_parameters": {
+        "max_position_size": 0.05,
+        "max_daily_loss": 0.02,
+        "order_size": 0.1
+    }
+}
+    }
+
+# code\src\main.py content:
+
+    {
+import pytz
+from apscheduler.schedulers.blocking import BlockingScheduler
+from datetime import datetime
+from ibkr_client import IBKRClient
+from strategies import SMACrossoverStrategy
+from risk_management import RiskManager
+from utils.market_hours import MarketHoursChecker
+
+def main():
+    config = load_config()  # Implement config loading
+    ibkr_client = IBKRClient()
+    risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
+    market_hours = MarketHoursChecker()
+    
+    strategies = []
+    # Initialize strategies for all stocks
+    for region, symbols in config['stocks'].items():
+        exchange = 'SMART' if region == 'NorthAmerica' else 'SEHK'
+        for symbol in symbols:
+            strategy = SMACrossoverStrategy(
+                symbol=symbol,
+                exchange=exchange,
+                risk_manager=risk_manager
+            )
+            strategies.append(strategy)
+    
+    scheduler = BlockingScheduler()
+    for strategy in strategies:
+        scheduler.add_job(
+            strategy_check,
+            'cron',
+            day_of_week='mon-fri',
+            hour='*',
+            minute='*/5',
+            args=[strategy, market_hours, ibkr_client]
+        )
+    scheduler.start()
+
+def strategy_check(strategy, market_hours, ibkr_client):
+    if market_hours.is_market_open(strategy.exchange):
+        # Get latest market data
+        bars = ibkr_client.get_realtime_bars(strategy.symbol)
+        for bar in bars:
+            strategy.on_bar(bar)
+
+if __name__ == "__main__":
+    main()
+    }
+
+# code\src\ibkr_client\ibkr_api.py content:
+
+    {
+import threading
+import time
+from ibapi.client import EClient
+from ibapi.wrapper import EWrapper
+from ibapi.contract import Contract
+from ibapi.account_summary_tags import AccountSummaryTags
+
+class IBKRConnection(EWrapper, EClient):
+    def __init__(self):
+        EClient.__init__(self, self)
+        self.account_data = {}
+        self.positions = {}
+        self.reqId = 1
+        
+    def nextValidId(self, orderId):
+        self.next_order_id = orderId
+        
+    def updateAccountValue(self, key, value, currency, accountName):
+        if key == AccountSummaryTags.AvailableFunds:
+            self.account_data['available_cash'] = float(value)
+            
+    def position(self, account, contract, pos, avgCost):
+        self.positions[contract.symbol] = {
+            'position': pos,
+            'avg_cost': avgCost
+        }
+
+class IBKRClient:
+    def __init__(self):
+        self.conn = IBKRConnection()
+        self._connect()
+        
+    def _connect(self):
+        config = load_config()  # Implement config loader
+        self.conn.connect(config['ibkr']['host'], config['ibkr']['port'], config['ibkr']['client_id'])
+        ib_thread = threading.Thread(target=self._run_loop, daemon=True)
+        ib_thread.start()
+        time.sleep(1)
+        self._request_account_data()
+        
+    def _run_loop(self):
+        self.conn.run()
+        
+    def _request_account_data(self):
+        self.conn.reqAccountUpdates(True, "")
+        self.conn.reqPositions()
+    }
+
+# code\src\risk_management\risk_manager.py content:
+
+    {
+class RiskManager:
+    def __init__(self, ibkr_client, config):
+        self.ibkr_client = ibkr_client
+        self.config = config
+        
+    def approve_order(self, symbol, action):
+        account_data = self.ibkr_client.get_account_data()
+        positions = self.ibkr_client.get_positions()
+        
+        # Check available cash
+        if action == 'BUY':
+            usable_cash = account_data.get('available_cash', 0)
+            if usable_cash <= 0:
+                return False
+            
+        # Check position limits
+        position = positions.get(symbol, 0)
+        max_size = self.config['max_position_size'] * account_data['net_liquidation']
+        
+        if action == 'BUY' and position >= max_size:
+            return False
+        if action == 'SELL' and position <= 0:
+            return False
+            
+        return True
+
+    }
+
+# code\src\strategies\sma_crossover.py content:
+
+    {
+import pandas as pd
+import ta
+
+class SMACrossoverStrategy(TradingStrategy):
+    def __init__(self, symbol, exchange, risk_manager, short_period=50, long_period=200):
+        super().__init__(symbol, exchange, risk_manager)
+        self.short_period = short_period
+        self.long_period = long_period
+        self.historical_data = pd.DataFrame()
+        
+    def on_bar(self, bar):
+        self.historical_data = self.historical_data.append({
+            'open': bar.open,
+            'high': bar.high,
+            'low': bar.low,
+            'close': bar.close,
+            'volume': bar.volume
+        }, ignore_index=True)
+        
+        if len(self.historical_data) > self.long_period:
+            self.historical_data['sma_short'] = ta.trend.sma_indicator(
+                self.historical_data['close'], self.short_period)
+            self.historical_data['sma_long'] = ta.trend.sma_indicator(
+                self.historical_data['close'], self.long_period)
+            
+            if self._cross_above():
+                if self.risk_manager.approve_order(self.symbol, 'BUY'):
+                    self._place_order('BUY')
+            elif self._cross_below():
+                if self.risk_manager.approve_order(self.symbol, 'SELL'):
+                    self._place_order('SELL')
+
+    def _cross_above(self):
+        return (self.historical_data['sma_short'].iloc[-2] < self.historical_data['sma_long'].iloc[-2] and
+                self.historical_data['sma_short'].iloc[-1] > self.historical_data['sma_long'].iloc[-1])
+
+    def _cross_below(self):
+        return (self.historical_data['sma_short'].iloc[-2] > self.historical_data['sma_long'].iloc[-2] and
+                self.historical_data['sma_short'].iloc[-1] < self.historical_data['sma_long'].iloc[-1])
+
+    }
+
+# code\src\strategies\strategy_base.py content:
+
+    {
+from abc import ABC, abstractmethod
+
+class TradingStrategy(ABC):
+    def __init__(self, symbol, exchange, risk_manager):
+        self.symbol = symbol
+        self.exchange = exchange
+        self.risk_manager = risk_manager
+        
+    @abstractmethod
+    def on_bar(self, bar):
+        pass
+    }
+
+```
+Please help me modify the code according to the files above to meet the requirements for:
+"""
+
+"""
+Thank you.

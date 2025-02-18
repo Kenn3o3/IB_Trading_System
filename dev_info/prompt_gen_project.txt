@@ -1,0 +1,262 @@
+Here is an example code for trading with interactive broker for your reference:
+```
+#Imports
+import ibapi
+from ibapi.client import EClient
+from ibapi.wrapper import EWrapper
+from ibapi.contract import Contract
+from ibapi.order import *
+import ta
+import numpy as np
+import pandas as pd
+import pytz
+import math
+from datetime import datetime, timedelta
+import threading
+import time
+#Vars
+orderId = 1
+#Class for Interactive Brokers Connection
+class IBApi(EWrapper,EClient):
+    def __init__(self):
+        EClient.__init__(self, self)
+    # Historical Backtest Data
+    def historicalData(self, reqId, bar):
+        try:
+            bot.on_bar_update(reqId,bar,False)
+        except Exception as e:
+            print(e)
+    # On Realtime Bar after historical data finishes
+    def historicalDataUpdate(self, reqId, bar):
+        try:
+            bot.on_bar_update(reqId,bar,True)
+        except Exception as e:
+            print(e)
+    # On Historical Data End
+    def historicalDataEnd(self, reqId, start, end):
+        print(reqId)
+    # Get next order id we can use
+    def nextValidId(self, nextorderId):
+        global orderId
+        orderId = nextorderId
+    # Listen for realtime bars
+    def realtimeBar(self, reqId, time, open_, high, low, close,volume, wap, count):
+        super().realtimeBar(reqId, time, open_, high, low, close, volume, wap, count)
+        try:
+            bot.on_bar_update(reqId, time, open_, high, low, close, volume, wap, count)
+        except Exception as e:
+            print(e)
+    def error(self, id, errorCode, errorMsg):
+        print(errorCode)
+        print(errorMsg)
+#Bar Object
+class Bar:
+    open = 0
+    low = 0
+    high = 0
+    close = 0
+    volume = 0
+    date = datetime.now()
+    def __init__(self):
+        self.open = 0
+        self.low = 0
+        self.high = 0
+        self.close = 0
+        self.volume = 0
+        self.date = datetime.now()
+#Bot Logic
+class Bot:
+    ib = None
+    barsize = 1
+    currentBar = Bar()
+    bars = []
+    reqId = 1
+    global orderId
+    smaPeriod = 50
+    symbol = ""
+    initialbartime = datetime.now().astimezone(pytz.timezone("America/New_York"))
+    def __init__(self):
+        #Connect to IB on init
+        self.ib = IBApi()
+        self.ib.connect("127.0.0.1", 7496,1)
+        ib_thread = threading.Thread(target=self.run_loop, daemon=True)
+        ib_thread.start()
+        time.sleep(1)
+        currentBar = Bar()
+        #Get symbol info
+        self.symbol = input("Enter the symbol you want to trade : ")
+        #Get bar size
+        self.barsize = int(input("Enter the barsize you want to trade in minutes : "))
+        mintext = " min"
+        if (int(self.barsize) > 1):
+            mintext = " mins"
+        queryTime = (datetime.now().astimezone(pytz.timezone("America/New_York"))-timedelta(days=1)).replace(hour=16,minute=0,second=0,microsecond=0).strftime("%Y%m%d %H:%M:%S")
+        #Create our IB Contract Object
+        contract = Contract()
+        contract.symbol = self.symbol.upper()
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        self.ib.reqIds(-1)
+        # Request Market Data
+        #self.ib.reqRealTimeBars(0, contract, 5, "TRADES", 1, [])
+        self.ib.reqHistoricalData(self.reqId,contract,"","2 D",str(self.barsize)+mintext,"TRADES",1,1,True,[])
+    #Listen to socket in seperate thread
+    def run_loop(self):
+        self.ib.run()
+    #Bracet Order Setup
+    def bracketOrder(self, parentOrderId, action, quantity, profitTarget, stopLoss):
+        #Initial Entry
+        #Create our IB Contract Object
+        contract = Contract()
+        contract.symbol = self.symbol.upper()
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        # Create Parent Order / Initial Entry
+        parent = Order()
+        parent.orderId = parentOrderId
+        parent.orderType = "MKT"
+        parent.action = action
+        parent.totalQuantity = quantity
+        parent.transmit = False
+        # Profit Target
+        profitTargetOrder = Order()
+        profitTargetOrder.orderId = parent.orderId+1
+        profitTargetOrder.orderType = "LMT"
+        profitTargetOrder.action = "SELL"
+        profitTargetOrder.totalQuantity = quantity
+        profitTargetOrder.lmtPrice = round(profitTarget,2)
+        profitTargetOrder.parentId = parentOrderId
+        profitTargetOrder.transmit = False
+        # Stop Loss
+        stopLossOrder = Order()
+        stopLossOrder.orderId = parent.orderId+2
+        stopLossOrder.orderType = "STP"
+        stopLossOrder.action = "SELL"
+        stopLossOrder.totalQuantity = quantity
+        stopLossOrder.parentId = parentOrderId
+        stopLossOrder.auxPrice = round(stopLoss,2)
+        stopLossOrder.transmit = True
+
+        bracketOrders = [parent, profitTargetOrder, stopLossOrder]
+        return bracketOrders
+    #Pass realtime bar data back to our bot object
+    def on_bar_update(self, reqId, bar,realtime):
+        global orderId
+        #Historical Data to catch up
+        if (realtime == False):
+            self.bars.append(bar)
+        else:
+            bartime = datetime.strptime(bar.date,"%Y%m%d %H:%M:%S").astimezone(pytz.timezone("America/New_York"))
+            minutes_diff = (bartime-self.initialbartime).total_seconds() / 60.0
+            self.currentBar.date = bartime
+            lastBar = self.bars[len(self.bars)-1]
+            #On Bar Close
+            if (minutes_diff > 0 and math.floor(minutes_diff) % self.barsize == 0):
+                self.initialbartime = bartime
+                #Entry - If we have a higher high, a higher low and we cross the 50 SMA Buy
+                #1.) SMA
+                closes = []
+                for bar in self.bars:
+                    closes.append(bar.close)
+                self.close_array = pd.Series(np.asarray(closes))
+                self.sma = ta.trend.sma(self.close_array,self.smaPeriod,True)
+                print("SMA : " + str(self.sma[len(self.sma)-1]))
+                #2.) Calculate Higher Highs and Lows
+                lastLow = self.bars[len(self.bars)-1].low
+                lastHigh = self.bars[len(self.bars)-1].high
+                lastClose = self.bars[len(self.bars)-1].close
+
+                # Check Criteria
+                if (bar.close > lastHigh
+                    and self.currentBar.low > lastLow
+                    and bar.close > str(self.sma[len(self.sma)-1])
+                    and lastClose < str(self.sma[len(self.sma)-2])):
+                    #Bracket Order 2% Profit Target 1% Stop Loss
+                    profitTarget = round(bar.close * 1.02, 2)
+                    stopLoss = round(bar.close * 0.99, 2)
+                    quantity = 1
+                    bracket = self.bracketOrder(orderId,"BUY",quantity, profitTarget, stopLoss)
+                    contract = Contract()
+                    contract.symbol = self.symbol.upper()
+                    contract.secType = "STK"
+                    contract.exchange = "SMART"
+                    contract.currency = "USD"
+                    #Place Bracket Order
+                    for o in bracket:
+                        o.ocaGroup = "OCA_"+str(orderId)
+                        self.ib.placeOrder(o.orderId,contract,o)
+                    orderId += 3
+                #Bar closed append
+                self.currentBar.close = bar.close
+                print("New bar!")
+                self.bars.append(self.currentBar)
+                self.currentBar = Bar()
+                self.currentBar.open = bar.open
+        #Build  realtime bar
+        if (self.currentBar.open == 0):
+            self.currentBar.open = bar.open
+        if (self.currentBar.high == 0 or bar.high > self.currentBar.high):
+            self.currentBar.high = bar.high
+        if (self.currentBar.low == 0 or bar.low < self.currentBar.low):
+            self.currentBar.low = bar.low
+
+#Start Bot
+bot = Bot()
+```
+Here is a pseudo python interactive broker algo-trading project structure for your reference:
+```
+NVDA_Trading_System/
+├── config/                 # Configuration files
+│   └── config.json         # API credentials and parameters
+├── src/
+│   ├── ibkr_client/        # IBKR connectivity
+│   ├── strategies/         # Trading strategies
+│   ├── risk_management/    # Risk controls
+│   ├── utils/              # Helper functions
+│   └── main.py             # Main application
+├── tests/                  # Unit tests
+└── requirements.txt        # Python dependencies
+```
+
+Please help me write the algo-trading project using an example strategy. Requirement for the trading project:
+1. the project should have good modularization. For example, if I want to use LLMs for trading in the future, It will be possible to just modify a little bit on the strategies.
+
+2. They should consider the followings automatically:
+- very detailed, full details of account info like usable cash, bought stocks, ... so that the bots can consider more factors
+- I have subscribed to some market data, which may be needed by the bot
+
+3. The program should minimize human effort, we should give you a list of stocks which include North America stocks and Asia (Hong Kong) stocks. Then the program will run 24/7 based on the market hours and the stocks input.
+
+my market data subscriptions include:
+```
+Market Data Subscriptions:
+
+North America:
+---
+US Equity and Options Add-On Streaming Bundle (NP)
+Includes streaming real-time quotes for NYSE (CTA/Network A), AMEX (CTA/Network B), NASDAQ (UTP/Network C), and OPRA (US Options). In order to subscribe to US Equity and Options Add-On Streaming Bundle (NP), the user must already be subscribed to US Securities Snapshot and Futures Value Bundle (NP).
+---
+US Securities Snapshot and Futures Value Bundle (NP,L1)
+This service will deliver NBBO snapshot quotes for all listed US equity issues as well as top of book data for CME Group Futures. Also includes Dow Jones Industrial Average, S&P 500 Index and OTC Markets quotes. Note, US Equity NBBO snapshot quotes will cost an additional 0.01 USD above the listed subscription price and waiver.
+---
+US Mutual Funds (NP,L1)
+Provides no-load mutual funds. The FUNDSERV is the only available exchange for routing destination.
+---
+CME Event Contracts
+CME Event Contracts
+---
+US Real-Time Non Consolidated Streaming Quotes (IBKR-PRO)
+A BBO alternative that will deliver aggregated quote, trade and volume, for five US equity exchange (BATS, BYX, EDGX, EDGEA, IEX)
+---
+
+Asia:
+---
+Hong Kong Securities Exchange (Stocks, Warrants, Bonds) (L1)
+Provides top of book bid/ask and last prices for Hong Kong Stocks, Warrants and Bonds.
+---
+OSL
+OSL
+---
+```

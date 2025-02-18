@@ -1,1 +1,1 @@
-conda env: algo_trade
+conda env: ib_trade
