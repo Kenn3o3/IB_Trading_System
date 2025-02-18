@@ -1,0 +1,5 @@
+ibapi
+ta
+pandas
+numpy
+matplotlib

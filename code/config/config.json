@@ -1,0 +1,16 @@
+{
+    "ibkr": {
+        "host": "127.0.0.1",
+        "port": 7496,
+        "client_id": 1
+    },
+    "stocks": {
+        "NorthAmerica": ["AAPL", "NVDA"],
+        "AsiaHK": ["0700", "0001"]
+    },
+    "risk_parameters": {
+        "max_position_size": 0.05,
+        "max_daily_loss": 0.02,
+        "order_size": 0.1
+    }
+}

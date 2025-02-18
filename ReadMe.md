@@ -1,0 +1,1 @@
+conda env: algo_trade
