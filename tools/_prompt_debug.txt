@@ -1,3 +1,5 @@
+here is the folder structure and the corresponding file content in each folder:
+```
 Directory Structure:
 └── /
     ├── ibot.py
@@ -212,3 +214,30 @@ class Bot:
 #Start Bot
 bot = Bot()
     }
+
+```
+The following errors were encountered:
+```
+(ib_trade) PS C:\Users\user\OneDrive\projects\IB_Trading_System> python .\examples\ibot.py
+2104
+Market data farm connection is OK:usfarm.nj
+2104
+Market data farm connection is OK:usfuture
+2104
+Market data farm connection is OK:cashfarm
+2104
+Market data farm connection is OK:usfarm
+2106
+HMDS data farm connection is OK:ushmds
+2158
+Sec-def data farm connection is OK:secdefil
+Enter the symbol you want to trade : 2104
+Market data farm connection is OK:usopt
+2104
+Market data farm connection is OK:eufarmnj
+nvda
+Enter the barsize you want to trade in minutes : 5
+162
+Historical Market Data Service error message:Trading TWS session is connected from a different IP address
+```
+Please help me debug and fix these errors.

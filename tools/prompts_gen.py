@@ -36,10 +36,10 @@ prompt_debug = debug_template.replace('<files_log>', files_log) \
                              .replace('<errors>', errors)
 
 # Write final prompts to files
-with open('tools/prompt_create.txt', 'w', encoding='utf-8') as f:
+with open('tools/_prompt_create.txt', 'w', encoding='utf-8') as f:
     f.write(prompt_create)
 
-with open('tools/prompt_debug.txt', 'w', encoding='utf-8') as f:
+with open('tools/_prompt_debug.txt', 'w', encoding='utf-8') as f:
     f.write(prompt_debug)
 
 print("Successfully generated prompts. Empty files were created for missing placeholders.")

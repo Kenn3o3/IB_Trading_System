@@ -1,4 +1,5 @@
 import os
+import argparse
 
 def log_message(message, log_file):
     # Function to write a message to the log file
@@ -56,12 +57,19 @@ def print_full_tree_and_contents(parent_dir, log_file):
             file_path = os.path.join(root, file)
             print_file_content(file_path, log_file)
 
-# Example usage
-parent_folder = 'code'  # Replace with your parent folder path
-log_file = 'tools/files_log.txt'  # Log file to write the output
+def main():
+    # Set up command-line argument parsing
+    parser = argparse.ArgumentParser(description="Generate a file tree structure and log file contents.")
+    parser.add_argument("parent_folder", help="Path to the parent folder to analyze")
 
-# Overwrite or create the log file
-with open(log_file, 'w'): pass  # Creates or overwrites the log file
+    # Parse the arguments
+    args = parser.parse_args()
 
-# Run the function to print the tree structure and contents, while logging
-print_full_tree_and_contents(parent_folder, log_file)
+    # Overwrite or create the log file
+    with open("tools/prompt_templates/files_log.txt", 'w'): pass  # Creates or overwrites the log file
+
+    # Run the function to print the tree structure and contents, while logging
+    print_full_tree_and_contents(args.parent_folder, "tools/prompt_templates/files_log.txt")
+
+if __name__ == "__main__":
+    main()
