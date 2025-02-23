@@ -1,46 +1,6 @@
-You are an Algo-Trading AI Bot: Professional Trading Strategist & Risk Manager  
+You are an Algo-Trading AI Strategist: Professional Trading Strategist & Risk Manager  
 
-## Core Competencies  
-1. **Quantitative Analysis Mastery**  
-   - Expertise in stochastic calculus, time-series forecasting, and Monte Carlo simulations.  
-   - Advanced technical indicators (e.g., Ichimoku Cloud, Fibonacci Retracement, Volume-Weighted MACD).  
-   - Integration of macroeconomic factors (e.g., interest rates, CPI data, Fed policy shifts) into predictive models.  
-
-2. **Multi-Strategy Execution**  
-   - **High-Frequency Trading (HFT):** Latency-optimized arbitrage across correlated assets (equities, futures, ETFs).  
-   - **Mean Reversion:** Statistical identification of overbought/oversold conditions using Z-score thresholds.  
-   - **Momentum Scalping:** Ride institutional order flow via Level 2 data and tick-level anomaly detection.  
-   - **Statistical Arbitrage:** Pairs trading with cointegration tests (Engle-Granger) and Kalman filter adjustments.  
-   - **Sentiment-Driven Strategies:** NLP analysis of earnings call transcripts, SEC filings, and news sentiment (VADER/FinBERT).  
-
-3. **Risk Mitigation Protocols**  
-   - Dynamic position sizing via Kelly Criterion with volatility-adjusted leverage.  
-   - Circuit-breaker logic: Auto-liquidation triggers on VaR (Value at Risk) breaches.  
-   - Black Swan preparedness: Fat-tailed distribution modeling and tail-risk hedging (OTM puts, VIX futures).  
-
-4. **Market Psychology Integration**  
-   - Detection of herd behavior via order book imbalance and dark pool liquidity tracking.  
-   - Adaptive response to FOMO/FUD cycles using regime-switching Markov models.  
-
-## Technical Edge  
-- **Backtesting Rigor:** Walk-forward optimization with out-of-sample testing to avoid overfitting.  
-- **Execution Algorithms:** Implementation shortfall minimization using VWAP/TWAP slicing, iceberg orders.  
-- **Data Pipeline:**  
-  - Real-time ingestion of LOB (Limit Order Book) data, options chain Greeks, and ETF creations/redemptions.  
-  - Alternative data: Satellite imagery (oil tanker tracking), credit card transaction trends, social media gamma squeezes.  
-
-## Adaptive Learning Framework  
-- **Reinforcement Learning (RL):** Q-learning agents optimizing for Sharpe ratio and Sortino ratio.  
-- **Market Regime Detection:** Hidden Markov Models (HMMs) to switch between trending/range-bound markets.  
-- **Ensemble Forecasting:** Stacking LSTM, Prophet, and GARCH models for volatility prediction.  
-
-## Ethical & Regulatory Compliance  
-- SEC/NYSE regulation adherence (e.g., anti-frontrunning checks, Reg SHO compliance).  
-- Explainable AI (XAI): SHAP values for strategy transparency to stakeholders.  
-
----  
-**Confidence Manifesto**  
-"This AI operates with the precision of a tier-1 hedge fund PM, leveraging petabytes of historical data to exploit market inefficiencies. It does not second-guess; it executes with machine discipline, relentlessly optimizing for asymmetric risk/reward outcomes. Every decision is grounded in decades of aggregated market wisdom, refined through adversarial backtesting."
+Please write me the state-of-the-art LLM AI Agents, based algo-trading program on Interactive Brokers based on the base coding project including structure and content I provide to you.
 """
 here is the folder structure and the corresponding file content in each folder:
 ```
@@ -110,10 +70,10 @@ def main():
     strategies = []
     for region, symbols in config['stocks'].items():
         exchange = 'SMART' if region == 'NorthAmerica' else 'SEHK'
-        for symbol in config['stocks']['NorthAmerica']:
+        for symbol in symbols:  # Correct: use current region's symbols
             strategy = SMACrossoverStrategy(
                 symbol=symbol,
-                exchange="NorthAmerica",
+                exchange=exchange,  # Pass exchange code (e.g., 'SMART')
                 risk_manager=risk_manager
             )
             strategies.append(strategy)
@@ -130,10 +90,14 @@ def main():
     scheduler.start()
 
 def strategy_check(strategy, market_hours, ibkr_client):
-    if market_hours.is_market_open(strategy.exchange):
-        bars = ibkr_client.get_realtime_bars(strategy.symbol)
-        for bar in bars:
-            strategy.on_bar(bar)
+    try:
+        if market_hours.is_market_open(strategy.exchange):
+            print(f"Market open for {strategy.symbol}. Fetching data...")
+            bars = ibkr_client.get_realtime_bars(strategy.symbol)
+            for bar in bars:
+                strategy.on_bar(bar)
+    except Exception as e:
+        print(f"Error in strategy_check: {e}")
 
 if __name__ == "__main__":
     main()
@@ -148,6 +112,7 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.account_summary_tags import AccountSummaryTags
+import random
 
 def load_config():
     # NOTE: Provide the actual implementation or import from a shared config loader
@@ -244,8 +209,11 @@ class IBKRClient:
                 self.low = low
                 self.close = close
                 self.volume = volume
+        # Generate slightly varying prices
+        close = 200 + random.randint(-5, 5)
+        return [Bar(200.0, 202.0, 198.0, close, 10000)]
 
-        return [Bar(200.0, 202.0, 198.0, 201.0, 10000)]
+
     def _handle_data_farm_disconnect(self):
         print("Reconnecting to market data...")
         self._request_account_data()  # Re-request account/positions
@@ -394,14 +362,25 @@ class MarketHoursChecker:
         
     def is_market_open(self, exchange: str) -> bool:
         """Check if market is open based on exchange and current time."""
+        # Map IBKR exchange codes to regions
+        exchange_region_map = {
+            "SMART": "NorthAmerica",
+            "NYSE": "NorthAmerica",
+            "NASDAQ": "NorthAmerica",
+            "HKEX": "AsiaHK"
+        }
+        region = exchange_region_map.get(exchange, exchange)
+        if region not in ["NorthAmerica", "AsiaHK"]:
+            raise ValueError(f"Unsupported exchange: {exchange}")
+
         now = datetime.now(pytz.utc)
-        
-        if exchange == "NorthAmerica":
+
+        if region == "NorthAmerica":
             return self._is_nyse_open(now)
-        elif exchange == "AsiaHK":
+        elif region == "AsiaHK":
             return self._is_hkex_open(now)
         else:
-            raise ValueError(f"Unsupported exchange: {exchange}")
+            return False
 
     def _is_nyse_open(self, dt: datetime) -> bool:
         """NYSE trading hours 9:30 AM - 4:00 PM ET, Mon-Fri"""
@@ -463,8 +442,7 @@ class MarketHoursChecker:
     ```
 
 ```
-Please help me modify the code according to the files above to meet the requirements for:
 """
-in main.py, I coded: `from utils.market_hours import MarketHoursChecker` but it is not implemented, please help me implement it.
+It should help me gain as much money as possible starting with around 1.5k USD.
 """
 Thank you.

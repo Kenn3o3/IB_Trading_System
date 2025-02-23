@@ -50,5 +50,6 @@ def strategy_check(strategy, market_hours, ibkr_client):
     except Exception as e:
         print(f"Error in strategy_check: {e}")
 
+
 if __name__ == "__main__":
     main()
