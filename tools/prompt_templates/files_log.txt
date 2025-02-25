@@ -2,16 +2,38 @@ Directory Structure:
 └── code/
     └── config/
         ├── config.json
+        └── prompts/
+            ├── news_filter.txt
+            ├── sentiment_analysis.txt
     └── src/
         ├── main.py
+        └── ai_agents/
+            ├── aggressive_trader.py
+            ├── base_agent.py
+            ├── bear_researcher.py
+            ├── blackboard.py
+            ├── bull_researcher.py
+            ├── conservative_trader.py
+            ├── debate.py
+            ├── ensemble_strategy.py
+            ├── fundamental_analyst.py
+            ├── market_sentiment.py
+            ├── rl_trader.py
+            ├── sentiment_analyst.py
+            ├── technical_analyst.py
+            ├── trader.py
         └── ibkr_client/
+            ├── data_pipeline.py
             ├── ibkr_api.py
         └── risk_management/
+            ├── adaptive_sizing.py
             ├── risk_manager.py
         └── strategies/
             ├── sma_crossover.py
             ├── strategy_base.py
+            ├── transformer_strategy.py
         └── utils/
+            ├── llm_client.py
             ├── market_hours.py
 
 File Contents:
@@ -38,63 +60,384 @@ File Contents:
 
     ```
 
+# code\config\prompts\news_filter.txt content:
+
+    ```
+
+    ```
+
+# code\config\prompts\sentiment_analysis.txt content:
+
+    ```
+
+    ```
+
 # code\src\main.py content:
 
     ```
-import pytz
 from apscheduler.schedulers.blocking import BlockingScheduler
-from datetime import datetime
-# Adjust imports to match your folder structure
 from ibkr_client.ibkr_api import IBKRClient, load_config
-from strategies.sma_crossover import SMACrossoverStrategy
+from ibkr_client.data_pipeline import DataPipeline
+from ai_agents.fundamental_analyst import FundamentalAnalyst
+from ai_agents.sentiment_analyst import SentimentAnalyst
+from ai_agents.technical_analyst import TechnicalAnalyst
+from ai_agents.bull_researcher import BullResearcher
+from ai_agents.bear_researcher import BearResearcher
+from ai_agents.debate import Debate
+from ai_agents.conservative_trader import ConservativeTrader
+from ai_agents.aggressive_trader import AggressiveTrader
+from ai_agents.rl_trader import RLTrader
+from ai_agents.ensemble_strategy import ensemble_decision
+from ai_agents.blackboard import Blackboard
 from risk_management.risk_manager import RiskManager
 from utils.market_hours import MarketHoursChecker
 
 def main():
     config = load_config()
     ibkr_client = IBKRClient()
-    account_data = ibkr_client.get_account_data()
-    print("=== FULL ACCOUNT DATA ===")
-    for k, v in account_data.items():
-        print(f"{k}: {v}")
-    print("=========================")
-    risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
+    data_pipeline = DataPipeline()
+    blackboard = Blackboard()
     market_hours = MarketHoursChecker()
-    config['stocks'] = {"NorthAmerica": ["NVDA"]}
-    strategies = []
-    for region, symbols in config['stocks'].items():
-        exchange = 'SMART' if region == 'NorthAmerica' else 'SEHK'
-        for symbol in symbols:  # Correct: use current region's symbols
-            strategy = SMACrossoverStrategy(
-                symbol=symbol,
-                exchange=exchange,  # Pass exchange code (e.g., 'SMART')
-                risk_manager=risk_manager
-            )
-            strategies.append(strategy)
+
+    # Initialize agents
+    fundamental_analyst = FundamentalAnalyst("Fundamental Analyst", blackboard)
+    sentiment_analyst = SentimentAnalyst("Sentiment Analyst", blackboard)
+    technical_analyst = TechnicalAnalyst("Technical Analyst", blackboard)
+    bull_researcher = BullResearcher("Bull Researcher", blackboard)
+    bear_researcher = BearResearcher("Bear Researcher", blackboard)
+    facilitator = Agent("Facilitator", blackboard)  # Reuses base agent for simplicity
+    trader_agents = [
+        ConservativeTrader("Conservative Trader", blackboard),
+        AggressiveTrader("Aggressive Trader", blackboard),
+        RLTrader("RL Trader", blackboard)
+    ]
+    risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
+
     scheduler = BlockingScheduler()
-    for strategy in strategies:
+    for symbol in config['stocks']['NorthAmerica']:
         scheduler.add_job(
-            strategy_check,
+            trading_cycle,
             'cron',
             day_of_week='mon-fri',
             hour='*',
             minute='*/5',
-            args=[strategy, market_hours, ibkr_client]
+            args=[symbol, ibkr_client, data_pipeline, market_hours, blackboard, fundamental_analyst, sentiment_analyst, technical_analyst, bull_researcher, bear_researcher, facilitator, trader_agents, risk_manager]
         )
     scheduler.start()
 
-def strategy_check(strategy, market_hours, ibkr_client):
-    try:
-        if market_hours.is_market_open(strategy.exchange):
-            print(f"Market open for {strategy.symbol}. Fetching data...")
-            bars = ibkr_client.get_realtime_bars(strategy.symbol)
-            for bar in bars:
-                strategy.on_bar(bar)
-    except Exception as e:
-        print(f"Error in strategy_check: {e}")
+def trading_cycle(symbol, ibkr_client, data_pipeline, market_hours, blackboard, fundamental_analyst, sentiment_analyst, technical_analyst, bull_researcher, bear_researcher, facilitator, trader_agents, risk_manager):
+    if not market_hours.is_market_open('SMART'):
+        print(f"Market closed for {symbol}.")
+        return
+
+    # Fetch data
+    historical_data = data_pipeline.fetch_historical_data(symbol, "30 D", "1 min")
+    news = data_pipeline.fetch_news(symbol, "2024-01-01", "2024-12-31")
+    social_media = data_pipeline.fetch_social_media(symbol, "2024-01-01", "2024-12-31")
+    financials = data_pipeline.fetch_financial_statements(symbol)
+
+    # Analysts process data
+    fundamental_analyst.analyze(financials)
+    sentiment_analyst.analyze(news + social_media)
+    technical_analyst.analyze(historical_data)
+
+    # Conduct debate
+    debate = Debate(bull_researcher, bear_researcher, facilitator)
+    debate_outcome = debate.conduct_debate(symbol)
+
+    # Traders decide
+    for trader in trader_agents:
+        trader.make_decision(symbol, debate_outcome)
+
+    # Ensemble decision
+    trader_decisions = [trader.blackboard.get_report(trader.name)["decision"] for trader in trader_agents]
+    final_decision = ensemble_decision(trader_decisions)
+
+    # Risk management and execution
+    current_price = historical_data[-1]['close']  # Last close price
+    if final_decision != "hold" and risk_manager.approve_order(symbol, final_decision.upper(), historical_data, current_price):
+        ibkr_client.place_order(symbol, final_decision.upper())
+        print(f"Executed {final_decision} order for {symbol}.")
+    else:
+        print(f"No trade executed for {symbol}.")
 
 if __name__ == "__main__":
     main()
+    ```
+
+# code\src\ai_agents\aggressive_trader.py content:
+
+    ```
+from ai_agents.trader import Trader
+
+class AggressiveTrader(Trader):
+    def make_decision(self, symbol, debate_outcome):
+        sentiment_report = self.blackboard.get_report("Sentiment Analyst")
+        if debate_outcome == "bullish" or sentiment_report.get("sentiment") > 0:
+            self.decision = "buy"
+        else:
+            self.decision = "sell"
+        self.communicate({"decision": self.decision})
+    ```
+
+# code\src\ai_agents\base_agent.py content:
+
+    ```
+from utils.llm_client import LLMClient
+
+class Agent:
+    def __init__(self, name, blackboard):
+        self.name = name
+        self.blackboard = blackboard
+        self.llm = LLMClient()
+
+    def communicate(self, report):
+        """Post analysis to the blackboard."""
+        self.blackboard.post_report(self.name, report)
+
+    def analyze(self, data):
+        """Abstract method to be implemented by subclasses."""
+        raise NotImplementedError
+    ```
+
+# code\src\ai_agents\bear_researcher.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+
+class BearResearcher(Agent):
+    def generate_argument(self, symbol):
+        prompt = f"As a bear researcher, argue why {symbol} is not a good investment based on available data."
+        return self.llm.generate(prompt)
+    ```
+
+# code\src\ai_agents\blackboard.py content:
+
+    ```
+class Blackboard:
+    def __init__(self):
+        self.reports = {}
+
+    def post_report(self, agent_name, report):
+        self.reports[agent_name] = report
+
+    def get_report(self, agent_name):
+        return self.reports.get(agent_name, {})
+    ```
+
+# code\src\ai_agents\bull_researcher.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+
+class BullResearcher(Agent):
+    def generate_argument(self, symbol):
+        prompt = f"As a bull researcher, argue why {symbol} is a good investment based on available data."
+        return self.llm.generate(prompt)
+    ```
+
+# code\src\ai_agents\conservative_trader.py content:
+
+    ```
+from ai_agents.trader import Trader
+
+class ConservativeTrader(Trader):
+    def make_decision(self, symbol, debate_outcome):
+        tech_report = self.blackboard.get_report("Technical Analyst")
+        if debate_outcome == "bullish" and tech_report.get("signal") == "buy":
+            self.decision = "buy"
+        else:
+            self.decision = "hold"
+        self.communicate({"decision": self.decision})
+    ```
+
+# code\src\ai_agents\debate.py content:
+
+    ```
+from ai_agents.bull_researcher import BullResearcher
+from ai_agents.bear_researcher import BearResearcher
+
+class Debate:
+    def __init__(self, bull, bear, facilitator):
+        self.bull = bull
+        self.bear = bear
+        self.facilitator = facilitator
+
+    def conduct_debate(self, symbol):
+        bull_arg = self.bull.generate_argument(symbol)
+        bear_arg = self.bear.generate_argument(symbol)
+        prompt = f"Evaluate these arguments:\nBull: {bull_arg}\nBear: {bear_arg}\nDecide: BULLISH/NEUTRAL/BEARISH."
+        decision = self.facilitator.llm.generate(prompt)
+        return "bullish" if "BULLISH" in decision else "bearish" if "BEARISH" in decision else "neutral"
+    ```
+
+# code\src\ai_agents\ensemble_strategy.py content:
+
+    ```
+def ensemble_decision(trader_decisions):
+    votes = {"buy": 0, "sell": 0, "hold": 0}
+    for decision in trader_decisions:
+        votes[decision] += 1
+    return max(votes, key=votes.get)
+    ```
+
+# code\src\ai_agents\fundamental_analyst.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+
+class FundamentalAnalyst(Agent):
+    def analyze(self, data):
+        prompt = f"Analyze the financial statements: {data}. Provide a report on valuation and growth potential."
+        report = self.llm.generate(prompt)
+        self.communicate({"valuation": report.splitlines()[0], "growth": report.splitlines()[-1]})
+    ```
+
+# code\src\ai_agents\market_sentiment.py content:
+
+    ```
+import requests
+from llm_client import LLMClient
+
+class SentimentAnalyzer:
+    def __init__(self):
+        self.llm = LLMClient()
+        self.news_api_key = "YOUR_NEWSAPI_KEY"
+        
+    def get_real_time_sentiment(self, symbol):
+        # Fetch latest news
+        news = requests.get(
+            f"https://newsapi.org/v2/everything?q={symbol}&apiKey={self.news_api_key}"
+        ).json()
+        
+        # LLM Analysis
+        prompt = f"""Analyze market sentiment for {symbol} from these headlines:
+        {[article['title'] for article in news['articles'][:5]]}
+        Output: BULLISH/NEUTRAL/BEARISH and 1-sentence reasoning"""
+        
+        analysis = self.llm.generate(prompt)
+        return self._parse_sentiment(analysis)
+    
+    def _parse_sentiment(self, text):
+        # Implement LLM output parsing
+        if "BULLISH" in text: return 1
+        elif "BEARISH" in text: return -1
+        return 0
+    ```
+
+# code\src\ai_agents\rl_trader.py content:
+
+    ```
+from ai_agents.trader import Trader
+import torch
+import torch.nn as nn
+
+class TradingDQN(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 3)  # [HOLD, BUY, SELL]
+        )
+    
+    def forward(self, x):
+        return self.net(x)
+
+class RLTrader(Trader):
+    def __init__(self, name, blackboard):
+        super().__init__(name, blackboard)
+        self.model = TradingDQN(input_size=14)  # Adjust input size based on state
+
+    def get_state(self, symbol):
+        # Mock state: combine technical, sentiment, and debate data
+        return torch.FloatTensor([0.0] * 14)  # Implement actual state extraction
+
+    def make_decision(self, symbol, debate_outcome):
+        state = self.get_state(symbol)
+        with torch.no_grad():
+            q_values = self.model(state)
+        action = torch.argmax(q_values).item()
+        self.decision = ["hold", "buy", "sell"][action]
+        self.communicate({"decision": self.decision})
+    ```
+
+# code\src\ai_agents\sentiment_analyst.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+import requests
+
+class SentimentAnalyst(Agent):
+    def __init__(self, name, blackboard):
+        super().__init__(name, blackboard)
+        self.news_api_key = "YOUR_NEWSAPI_KEY"
+
+    def analyze(self, texts):
+        prompt = f"Analyze sentiment of these texts: {texts}. Output: BULLISH/NEUTRAL/BEARISH and reasoning."
+        sentiment = self.llm.generate(prompt)
+        sentiment_value = 1 if "BULLISH" in sentiment else -1 if "BEARISH" in sentiment else 0
+        self.communicate({"sentiment": sentiment_value, "reasoning": sentiment})
+    ```
+
+# code\src\ai_agents\technical_analyst.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+import pandas as pd
+import ta
+
+class TechnicalAnalyst(Agent):
+    def analyze(self, data):
+        df = pd.DataFrame(data)
+        df['sma_short'] = ta.trend.sma_indicator(df['close'], window=50)
+        df['sma_long'] = ta.trend.sma_indicator(df['close'], window=200)
+        signal = "buy" if df['sma_short'].iloc[-1] > df['sma_long'].iloc[-1] else "sell"
+        self.communicate({"signal": signal, "indicators": {"sma_short": df['sma_short'].iloc[-1], "sma_long": df['sma_long'].iloc[-1]}})
+    ```
+
+# code\src\ai_agents\trader.py content:
+
+    ```
+from ai_agents.base_agent import Agent
+
+class Trader(Agent):
+    def make_decision(self, symbol, debate_outcome):
+        raise NotImplementedError
+    ```
+
+# code\src\ibkr_client\data_pipeline.py content:
+
+    ```
+import requests
+from ibkr_client.ibkr_api import IBKRClient
+
+class DataPipeline:
+    def __init__(self):
+        self.ibkr_client = IBKRClient()
+        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with actual key
+
+    def fetch_historical_data(self, symbol, start_date, end_date):
+        """Fetch historical price data from IBKR."""
+        return self.ibkr_client.get_historical_data(symbol, start_date, end_date)
+
+    def fetch_news(self, symbol, start_date, end_date):
+        """Fetch news articles using NewsAPI."""
+        url = f"https://newsapi.org/v2/everything?q={symbol}&from={start_date}&to={end_date}&apiKey={self.news_api_key}"
+        response = requests.get(url)
+        return [article['title'] + ": " + article['description'] for article in response.json().get('articles', [])]
+
+    def fetch_social_media(self, symbol, start_date, end_date):
+        """Placeholder for social media data (e.g., Twitter API)."""
+        # Implement Twitter/Reddit API calls here
+        return []  # Mock data for now
+
+    def fetch_financial_statements(self, symbol):
+        """Placeholder for financial statements (e.g., SEC EDGAR)."""
+        # Implement API or scraping logic
+        return {"revenue": "N/A", "net_income": "N/A"}  # Mock data
     ```
 
 # code\src\ibkr_client\ibkr_api.py content:
@@ -214,41 +557,48 @@ class IBKRClient:
         # Re-subscribe to real-time data streams here
     ```
 
+# code\src\risk_management\adaptive_sizing.py content:
+
+    ```
+import numpy as np
+
+class AdaptivePositionSizer:
+    def __init__(self, volatility_lookback=20):
+        self.volatility_lookback = volatility_lookback
+        
+    def calculate_size(self, historical_data, current_price):
+        returns = np.diff(np.log(historical_data))
+        volatility = np.std(returns[-self.volatility_lookback:])
+        base_size = min(0.2 / (volatility + 1e-8), 0.05)
+        return base_size * current_price  # Adjusted for account size
+    ```
+
 # code\src\risk_management\risk_manager.py content:
 
     ```
+from risk_management.adaptive_sizing import AdaptivePositionSizer
+
 class RiskManager:
     def __init__(self, ibkr_client, config):
         self.ibkr_client = ibkr_client
         self.config = config
+        self.sizer = AdaptivePositionSizer()
 
-    def approve_order(self, symbol, action):
+    def approve_order(self, symbol, action, historical_data, current_price):
         account_data = self.ibkr_client.get_account_data()
         positions = self.ibkr_client.get_positions()
-
-        # Check available cash (if action is BUY, ensure we have positive funds).
-        if action == 'BUY':
-            usable_cash = account_data.get('AvailableFunds', 0)  # IB often labels 'AvailableFunds'
-            if usable_cash <= 0:
-                return False
-
-        # Check net liquidation if available
         net_liq = account_data.get('NetLiquidation', 0)
         max_size = self.config['max_position_size'] * net_liq
-
-        # Current position
         current_position = positions.get(symbol, {}).get('position', 0)
+        order_size = self.sizer.calculate_size(historical_data, current_price)
 
-        if action == 'BUY' and current_position >= max_size:
-            return False
-        if action == 'SELL':
-            # Even if we hold 0, a SELL will open a short if the broker allows
-            # But if you want to limit how big the short can get, also check abs(current_position)
-            if abs(current_position) >= max_size:
+        if action == 'BUY':
+            if account_data.get('AvailableFunds', 0) <= 0 or (current_position + order_size) > max_size:
                 return False
-
+        if action == 'SELL':
+            if abs(current_position - order_size) > max_size:
+                return False
         return True
-
     ```
 
 # code\src\strategies\sma_crossover.py content:
@@ -327,6 +677,31 @@ class TradingStrategy(ABC):
     @abstractmethod
     def on_bar(self, bar):
         pass
+    ```
+
+# code\src\strategies\transformer_strategy.py content:
+
+    ```
+
+    ```
+
+# code\src\utils\llm_client.py content:
+
+    ```
+from openai import OpenAI
+
+class LLMClient:
+    def __init__(self, model="gpt-4-1106-preview"):
+        self.client = OpenAI()
+        self.model = model
+        
+    def generate(self, prompt, temperature=0.3):
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature
+        )
+        return response.choices[0].message.content
     ```
 
 # code\src\utils\market_hours.py content:

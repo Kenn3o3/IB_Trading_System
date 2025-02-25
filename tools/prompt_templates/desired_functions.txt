@@ -1,1 +1,1 @@
-It should help me gain as much money as possible starting with around 1.5k USD.
+Please help me complete the trading system so that It can be run on interactive broker automatically. Leave blanks with only information that requires me to input such as API keys, other than that, complete all coding and the entire system.

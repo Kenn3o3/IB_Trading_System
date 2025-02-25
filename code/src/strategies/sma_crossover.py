@@ -1,6 +1,6 @@
 import pandas as pd
 import ta
-from .strategy_base import TradingStrategy  # <-- Add this line
+from strategies.strategy_base import TradingStrategy
 
 class SMACrossoverStrategy(TradingStrategy):
     def __init__(self, symbol, exchange, risk_manager, short_period=50, long_period=200):
@@ -10,13 +10,13 @@ class SMACrossoverStrategy(TradingStrategy):
         self.historical_data = pd.DataFrame()
 
     def on_bar(self, bar):
-        self.historical_data = self.historical_data.append({
+        self.historical_data = pd.concat([self.historical_data, pd.DataFrame([{
             'open': bar.open,
             'high': bar.high,
             'low': bar.low,
             'close': bar.close,
             'volume': bar.volume
-        }, ignore_index=True)
+        }])], ignore_index=True)
 
         if len(self.historical_data) > self.long_period:
             self.historical_data['sma_short'] = ta.trend.sma_indicator(
@@ -35,22 +35,17 @@ class SMACrossoverStrategy(TradingStrategy):
 
     def _cross_above(self):
         return (
-            self.historical_data['sma_short'].iloc[-2] <
-            self.historical_data['sma_long'].iloc[-2]
+            self.historical_data['sma_short'].iloc[-2] < self.historical_data['sma_long'].iloc[-2]
         ) and (
-            self.historical_data['sma_short'].iloc[-1] >
-            self.historical_data['sma_long'].iloc[-1]
+            self.historical_data['sma_short'].iloc[-1] > self.historical_data['sma_long'].iloc[-1]
         )
 
     def _cross_below(self):
         return (
-            self.historical_data['sma_short'].iloc[-2] >
-            self.historical_data['sma_long'].iloc[-2]
+            self.historical_data['sma_short'].iloc[-2] > self.historical_data['sma_long'].iloc[-2]
         ) and (
-            self.historical_data['sma_short'].iloc[-1] <
-            self.historical_data['sma_long'].iloc[-1]
+            self.historical_data['sma_short'].iloc[-1] < self.historical_data['sma_long'].iloc[-1]
         )
 
     def _place_order(self, action):
-        """Placeholder for placing an actual IB order."""
         print(f"[DEBUG] Placing {action} order on {self.symbol}.")
