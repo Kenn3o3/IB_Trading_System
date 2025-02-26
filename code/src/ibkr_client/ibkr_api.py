@@ -24,9 +24,12 @@ class IBKRConnection(EWrapper, EClient):
         self.historical_data_ready = threading.Event()
         self.reqId_to_symbol = {}
         self.subscribed_symbols = set()
+        self.connection_ready = threading.Event()
 
     def nextValidId(self, orderId):
         self.next_order_id = orderId
+        self.connection_ready.set()
+        print(f"Received nextValidId: {orderId}")
 
     def updateAccountValue(self, key, value, currency, accountName):
         try:
@@ -50,8 +53,10 @@ class IBKRConnection(EWrapper, EClient):
             symbol = self.reqId_to_symbol.get(reqId)
             if symbol:
                 self.current_prices[symbol] = price
+                print(f"Received price for {symbol}: {price}")
 
     def historicalData(self, reqId, bar):
+        print(f"Received historical bar for reqId {reqId}: {bar.date}, close: {bar.close}")
         self.historical_data.append({
             'date': bar.date,
             'open': bar.open,
@@ -74,7 +79,18 @@ class IBKRClient:
         self.conn.connect(config['ibkr']['host'], config['ibkr']['port'], config['ibkr']['client_id'])
         ib_thread = threading.Thread(target=self.conn.run, daemon=True)
         ib_thread.start()
-        time.sleep(1)
+        timeout = 10
+        start_time = time.time()
+        while not self.conn.isConnected() and (time.time() - start_time) < timeout:
+            print("Waiting for connection...")
+            time.sleep(1)
+        if not self.conn.isConnected():
+            raise ConnectionError("Failed to connect to IBKR after 10 seconds")
+        print("Connected to IBKR")
+        self.conn.connection_ready.wait(timeout=10)
+        if not self.conn.connection_ready.is_set():
+            raise ConnectionError("Connection not fully established after 10 seconds")
+        print("Connection fully established")
         self._request_account_data()
 
     def _request_account_data(self):
@@ -104,7 +120,7 @@ class IBKRClient:
     def get_current_price(self, symbol):
         if symbol not in self.conn.current_prices:
             self.subscribe_market_data(symbol)
-            time.sleep(1)  # Wait for price update
+            time.sleep(2)  # Increased wait time
         return self.conn.current_prices.get(symbol)
 
     def get_historical_data(self, symbol, duration, bar_size):

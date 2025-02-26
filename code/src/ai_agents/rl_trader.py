@@ -17,8 +17,8 @@ class TradingDQN(nn.Module):
         return self.net(x)
 
 class RLTrader(Trader):
-    def __init__(self, name, blackboard):
-        super().__init__(name, blackboard)
+    def __init__(self, name, blackboard, llm_client):
+        super().__init__(name, blackboard, llm_client)
         self.model = TradingDQN(input_size=4)  # Simplified state size
 
     def get_state(self, symbol):

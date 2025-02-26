@@ -2,9 +2,9 @@ import requests
 from ibkr_client.ibkr_api import IBKRClient
 
 class DataPipeline:
-    def __init__(self):
-        self.ibkr_client = IBKRClient()
-        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
+    def __init__(self, ibkr_client):
+        self.ibkr_client = ibkr_client
+        self.news_api_key = "YOUR_API_KEY"  # Replace with your NewsAPI key
 
     def fetch_historical_data(self, symbol, duration, bar_size):
         """Fetch historical price data from IBKR."""

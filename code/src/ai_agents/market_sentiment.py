@@ -4,7 +4,7 @@ from utils.llm_client import LLMClient
 class SentimentAnalyzer:
     def __init__(self):
         self.llm = LLMClient()
-        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
+        self.news_api_key = "YOUR_API_KEY"  # Replace with your NewsAPI key
         
     def get_real_time_sentiment(self, symbol):
         news = requests.get(

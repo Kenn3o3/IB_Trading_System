@@ -1,1 +1,41 @@
-Please help me complete the trading system so that It can be run on interactive broker automatically. Leave blanks with only information that requires me to input such as API keys, other than that, complete all coding and the entire system.
+The code is running now:
+```
+(ib_trade) PS C:\Users\user\OneDrive\projects\IB_Trading_System> python .\code\src\main.py
+Connected to IBKR
+Received nextValidId: 1
+Connection fully established
+INFO: Market data farm connection is OK:usfarm.nj
+INFO: Market data farm connection is OK:usfuture
+INFO: Market data farm connection is OK:cashfarm
+INFO: Market data farm connection is OK:usfarm
+INFO: HMDS data farm connection is OK:ushmds
+INFO: Sec-def data farm connection is OK:secdefil
+Received price for NVDA: 132.24
+Received price for NVDA: 132.28
+Received price for NVDA: 132.27
+Received price for NVDA: 132.28
+Received price for NVDA: 132.29
+Received price for NVDA: 132.3
+Received price for NVDA: 132.28
+Received price for NVDA: 132.29
+Received price for NVDA: 132.28
+Received price for NVDA: 132.27
+Received price for NVDA: 132.26
+Received price for NVDA: 132.24
+Received price for NVDA: 132.25
+Received price for NVDA: 132.27
+Received price for NVDA: 132.3
+Received price for NVDA: 132.29
+Received price for NVDA: 132.28
+Received price for NVDA: 132.29
+Received price for NVDA: 132.28
+Received price for NVDA: 132.3
+Received price for NVDA: 132.28
+Received price for NVDA: 132.29
+Received price for NVDA: 132.28
+Received price for NVDA: 132.29
+Received price for NVDA: 132.3
+Received price for NVDA: 132.28
+```
+
+Yet it doesn't seem like the code is doing any kind of trading currently. Also I don't know what kind of market data is received. And whether or not if LLM is used. Please help me enhance the code transparency so that I can have full grasp of what is going on.

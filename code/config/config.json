@@ -15,7 +15,7 @@
     },
     "llm": {
         "provider": "alibaba",
-        "api_key": "YOUR_ALIBABA_API_KEY",
+        "api_key": "YOUR_API_KEYS",
         "model": "qwen-turbo"
     }
 }

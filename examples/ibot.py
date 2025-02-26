@@ -77,7 +77,7 @@ class Bot:
         #Connect to IB on init
         self.ib = IBApi()
         try:
-            self.ib.connect("127.0.0.1", 7495, 1)
+            self.ib.connect("127.0.0.1", 7497, 1)
             print("Connected to IB.")
         except Exception as e:
             print(f"Connection failed: {e}")

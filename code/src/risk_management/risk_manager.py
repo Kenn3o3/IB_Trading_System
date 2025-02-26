@@ -26,3 +26,6 @@ class RiskManager:
             if current_position > 0:
                 return True, current_position  # Sell entire position
             return False, 0
+        if action not in ['BUY', 'SELL']:
+                print(f"Invalid action: {action}")
+                return False, 0  # Default return for invalid actions
