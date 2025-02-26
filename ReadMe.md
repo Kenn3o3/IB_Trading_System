@@ -1,4 +1,4 @@
-# AI-Powered Algorithmic Trading System with Interactive Brokers
+# AI-Powered Algorithmic Trading System with Interactive Brokers (In Construction)
 
 This project is an algorithmic trading system that integrates multiple LLM-based AI agents with Interactive Brokers (IBKR) for automated market analysis and trade execution. Using a blackboard architecture, the system employs a collaborative multi-agent approach to analyze market data, conduct debates on market outlook, and execute trades with robust risk management.
 
