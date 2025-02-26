@@ -1,9 +1,8 @@
-from ai_agents.base_agent import Agent
 import requests
 
 class SentimentAnalyst(Agent):
-    def __init__(self, name, blackboard):
-        super().__init__(name, blackboard)
+    def __init__(self, name, blackboard, llm_client):
+        super().__init__(name, blackboard, llm_client)
         self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
 
     def analyze(self, texts):

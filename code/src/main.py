@@ -15,25 +15,28 @@ from ai_agents.blackboard import Blackboard
 from risk_management.risk_manager import RiskManager
 from utils.market_hours import MarketHoursChecker
 from ai_agents.base_agent import Agent
+from utils.llm_client import LLMClient
 
 def main():
     config = load_config()
+    # Initialize LLMClient with Qwen settings
+    llm_client = LLMClient(api_key=config['llm']['api_key'], model=config['llm']['model'])
     ibkr_client = IBKRClient()
     data_pipeline = DataPipeline()
     blackboard = Blackboard()
     market_hours = MarketHoursChecker()
 
-    # Initialize agents
-    fundamental_analyst = FundamentalAnalyst("Fundamental Analyst", blackboard)
-    sentiment_analyst = SentimentAnalyst("Sentiment Analyst", blackboard)
-    technical_analyst = TechnicalAnalyst("Technical Analyst", blackboard)
-    bull_researcher = BullResearcher("Bull Researcher", blackboard)
-    bear_researcher = BearResearcher("Bear Researcher", blackboard)
-    facilitator = Agent("Facilitator", blackboard)
+    # Initialize agents with llm_client
+    fundamental_analyst = FundamentalAnalyst("Fundamental Analyst", blackboard, llm_client)
+    sentiment_analyst = SentimentAnalyst("Sentiment Analyst", blackboard, llm_client)
+    technical_analyst = TechnicalAnalyst("Technical Analyst", blackboard, llm_client)
+    bull_researcher = BullResearcher("Bull Researcher", blackboard, llm_client)
+    bear_researcher = BearResearcher("Bear Researcher", blackboard, llm_client)
+    facilitator = Agent("Facilitator", blackboard, llm_client)
     trader_agents = [
-        ConservativeTrader("Conservative Trader", blackboard),
-        AggressiveTrader("Aggressive Trader", blackboard),
-        RLTrader("RL Trader", blackboard)
+        ConservativeTrader("Conservative Trader", blackboard, llm_client),
+        AggressiveTrader("Aggressive Trader", blackboard, llm_client),
+        RLTrader("RL Trader", blackboard, llm_client)
     ]
     risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
 

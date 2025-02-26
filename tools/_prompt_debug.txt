@@ -93,6 +93,7 @@ from ai_agents.ensemble_strategy import ensemble_decision
 from ai_agents.blackboard import Blackboard
 from risk_management.risk_manager import RiskManager
 from utils.market_hours import MarketHoursChecker
+from ai_agents.base_agent import Agent
 
 def main():
     config = load_config()
@@ -107,13 +108,17 @@ def main():
     technical_analyst = TechnicalAnalyst("Technical Analyst", blackboard)
     bull_researcher = BullResearcher("Bull Researcher", blackboard)
     bear_researcher = BearResearcher("Bear Researcher", blackboard)
-    facilitator = Agent("Facilitator", blackboard)  # Reuses base agent for simplicity
+    facilitator = Agent("Facilitator", blackboard)
     trader_agents = [
         ConservativeTrader("Conservative Trader", blackboard),
         AggressiveTrader("Aggressive Trader", blackboard),
         RLTrader("RL Trader", blackboard)
     ]
     risk_manager = RiskManager(ibkr_client, config['risk_parameters'])
+
+    # Subscribe to market data for all symbols at startup
+    for symbol in config['stocks']['NorthAmerica']:
+        ibkr_client.subscribe_market_data(symbol)
 
     scheduler = BlockingScheduler()
     for symbol in config['stocks']['NorthAmerica']:
@@ -133,10 +138,14 @@ def trading_cycle(symbol, ibkr_client, data_pipeline, market_hours, blackboard, 
         return
 
     # Fetch data
-    historical_data = data_pipeline.fetch_historical_data(symbol, "30 D", "1 min")
+    historical_data = data_pipeline.fetch_historical_data(symbol, "30 D", "5 mins")
     news = data_pipeline.fetch_news(symbol, "2024-01-01", "2024-12-31")
     social_media = data_pipeline.fetch_social_media(symbol, "2024-01-01", "2024-12-31")
     financials = data_pipeline.fetch_financial_statements(symbol)
+    current_price = ibkr_client.get_current_price(symbol)
+    if current_price is None:
+        print(f"Unable to fetch current price for {symbol}.")
+        return
 
     # Analysts process data
     fundamental_analyst.analyze(financials)
@@ -144,7 +153,7 @@ def trading_cycle(symbol, ibkr_client, data_pipeline, market_hours, blackboard, 
     technical_analyst.analyze(historical_data)
 
     # Conduct debate
-    debate = Debate(bull_researcher, bear_researcher, facilitator)
+    debate = Debate(bull_researcher, bear_researcher, facilitator, blackboard)
     debate_outcome = debate.conduct_debate(symbol)
 
     # Traders decide
@@ -156,10 +165,11 @@ def trading_cycle(symbol, ibkr_client, data_pipeline, market_hours, blackboard, 
     final_decision = ensemble_decision(trader_decisions)
 
     # Risk management and execution
-    current_price = historical_data[-1]['close']  # Last close price
-    if final_decision != "hold" and risk_manager.approve_order(symbol, final_decision.upper(), historical_data, current_price):
-        ibkr_client.place_order(symbol, final_decision.upper())
-        print(f"Executed {final_decision} order for {symbol}.")
+    closes = [bar['close'] for bar in historical_data]
+    approved, shares = risk_manager.approve_order(symbol, final_decision.upper(), closes, current_price)
+    if final_decision != "hold" and approved:
+        ibkr_client.place_order(symbol, final_decision.upper(), shares)
+        print(f"Executed {final_decision} order for {symbol} with {shares} shares.")
     else:
         print(f"No trade executed for {symbol}.")
 
@@ -260,17 +270,20 @@ from ai_agents.bull_researcher import BullResearcher
 from ai_agents.bear_researcher import BearResearcher
 
 class Debate:
-    def __init__(self, bull, bear, facilitator):
+    def __init__(self, bull, bear, facilitator, blackboard):
         self.bull = bull
         self.bear = bear
         self.facilitator = facilitator
+        self.blackboard = blackboard
 
     def conduct_debate(self, symbol):
         bull_arg = self.bull.generate_argument(symbol)
         bear_arg = self.bear.generate_argument(symbol)
         prompt = f"Evaluate these arguments:\nBull: {bull_arg}\nBear: {bear_arg}\nDecide: BULLISH/NEUTRAL/BEARISH."
         decision = self.facilitator.llm.generate(prompt)
-        return "bullish" if "BULLISH" in decision else "bearish" if "BEARISH" in decision else "neutral"
+        outcome = "bullish" if "BULLISH" in decision else "bearish" if "BEARISH" in decision else "neutral"
+        self.blackboard.post_report("Debate", {"outcome": outcome})
+        return outcome
     ```
 
 # code\src\ai_agents\ensemble_strategy.py content:
@@ -292,27 +305,28 @@ class FundamentalAnalyst(Agent):
     def analyze(self, data):
         prompt = f"Analyze the financial statements: {data}. Provide a report on valuation and growth potential."
         report = self.llm.generate(prompt)
-        self.communicate({"valuation": report.splitlines()[0], "growth": report.splitlines()[-1]})
+        lines = report.splitlines()
+        valuation = lines[0] if lines else "N/A"
+        growth = lines[-1] if lines else "N/A"
+        self.communicate({"valuation": valuation, "growth": growth})
     ```
 
 # code\src\ai_agents\market_sentiment.py content:
 
     ```
 import requests
-from llm_client import LLMClient
+from utils.llm_client import LLMClient
 
 class SentimentAnalyzer:
     def __init__(self):
         self.llm = LLMClient()
-        self.news_api_key = "YOUR_NEWSAPI_KEY"
+        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
         
     def get_real_time_sentiment(self, symbol):
-        # Fetch latest news
         news = requests.get(
             f"https://newsapi.org/v2/everything?q={symbol}&apiKey={self.news_api_key}"
         ).json()
         
-        # LLM Analysis
         prompt = f"""Analyze market sentiment for {symbol} from these headlines:
         {[article['title'] for article in news['articles'][:5]]}
         Output: BULLISH/NEUTRAL/BEARISH and 1-sentence reasoning"""
@@ -321,9 +335,10 @@ class SentimentAnalyzer:
         return self._parse_sentiment(analysis)
     
     def _parse_sentiment(self, text):
-        # Implement LLM output parsing
-        if "BULLISH" in text: return 1
-        elif "BEARISH" in text: return -1
+        if "BULLISH" in text:
+            return 1
+        elif "BEARISH" in text:
+            return -1
         return 0
     ```
 
@@ -351,11 +366,19 @@ class TradingDQN(nn.Module):
 class RLTrader(Trader):
     def __init__(self, name, blackboard):
         super().__init__(name, blackboard)
-        self.model = TradingDQN(input_size=14)  # Adjust input size based on state
+        self.model = TradingDQN(input_size=4)  # Simplified state size
 
     def get_state(self, symbol):
-        # Mock state: combine technical, sentiment, and debate data
-        return torch.FloatTensor([0.0] * 14)  # Implement actual state extraction
+        tech_report = self.blackboard.get_report("Technical Analyst") or {}
+        sentiment_report = self.blackboard.get_report("Sentiment Analyst") or {}
+        debate_report = self.blackboard.get_report("Debate") or {}
+        state = [
+            tech_report.get("sma_short", 0),
+            tech_report.get("sma_long", 0),
+            sentiment_report.get("sentiment", 0),
+            1 if debate_report.get("outcome") == "bullish" else -1 if debate_report.get("outcome") == "bearish" else 0
+        ]
+        return torch.FloatTensor(state)
 
     def make_decision(self, symbol, debate_outcome):
         state = self.get_state(symbol)
@@ -375,7 +398,7 @@ import requests
 class SentimentAnalyst(Agent):
     def __init__(self, name, blackboard):
         super().__init__(name, blackboard)
-        self.news_api_key = "YOUR_NEWSAPI_KEY"
+        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
 
     def analyze(self, texts):
         prompt = f"Analyze sentiment of these texts: {texts}. Output: BULLISH/NEUTRAL/BEARISH and reasoning."
@@ -397,7 +420,11 @@ class TechnicalAnalyst(Agent):
         df['sma_short'] = ta.trend.sma_indicator(df['close'], window=50)
         df['sma_long'] = ta.trend.sma_indicator(df['close'], window=200)
         signal = "buy" if df['sma_short'].iloc[-1] > df['sma_long'].iloc[-1] else "sell"
-        self.communicate({"signal": signal, "indicators": {"sma_short": df['sma_short'].iloc[-1], "sma_long": df['sma_long'].iloc[-1]}})
+        self.communicate({
+            "signal": signal,
+            "sma_short": df['sma_short'].iloc[-1],
+            "sma_long": df['sma_long'].iloc[-1]
+        })
     ```
 
 # code\src\ai_agents\trader.py content:
@@ -419,11 +446,11 @@ from ibkr_client.ibkr_api import IBKRClient
 class DataPipeline:
     def __init__(self):
         self.ibkr_client = IBKRClient()
-        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with actual key
+        self.news_api_key = "YOUR_NEWSAPI_KEY"  # Replace with your NewsAPI key
 
-    def fetch_historical_data(self, symbol, start_date, end_date):
+    def fetch_historical_data(self, symbol, duration, bar_size):
         """Fetch historical price data from IBKR."""
-        return self.ibkr_client.get_historical_data(symbol, start_date, end_date)
+        return self.ibkr_client.get_historical_data(symbol, duration, bar_size)
 
     def fetch_news(self, symbol, start_date, end_date):
         """Fetch news articles using NewsAPI."""
@@ -433,13 +460,13 @@ class DataPipeline:
 
     def fetch_social_media(self, symbol, start_date, end_date):
         """Placeholder for social media data (e.g., Twitter API)."""
-        # Implement Twitter/Reddit API calls here
-        return []  # Mock data for now
+        # TODO: Implement with Twitter API or similar
+        return []  # Mock data; replace with actual implementation
 
     def fetch_financial_statements(self, symbol):
         """Placeholder for financial statements (e.g., SEC EDGAR)."""
-        # Implement API or scraping logic
-        return {"revenue": "N/A", "net_income": "N/A"}  # Mock data
+        # TODO: Implement with SEC EDGAR API or similar
+        return {"revenue": "N/A", "net_income": "N/A"}  # Mock data; replace with actual implementation
     ```
 
 # code\src\ibkr_client\ibkr_api.py content:
@@ -450,12 +477,11 @@ import time
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
+from ibapi.order import Order
 from ibapi.account_summary_tags import AccountSummaryTags
-import random
+import json
 
 def load_config():
-    # NOTE: Provide the actual implementation or import from a shared config loader
-    import json
     with open("code/config/config.json", "r") as f:
         return json.load(f)
 
@@ -464,36 +490,53 @@ class IBKRConnection(EWrapper, EClient):
         EClient.__init__(self, self)
         self.account_data = {}
         self.positions = {}
+        self.current_prices = {}
         self.reqId = 1
         self.next_order_id = None
         self.account_data_ready = threading.Event()
+        self.historical_data = []
+        self.historical_data_ready = threading.Event()
+        self.reqId_to_symbol = {}
+        self.subscribed_symbols = set()
 
     def nextValidId(self, orderId):
         self.next_order_id = orderId
 
     def updateAccountValue(self, key, value, currency, accountName):
-        """
-        Store each key/value in a dictionary for later use/printing.
-        Example keys: 'AvailableFunds', 'NetLiquidation', 'BuyingPower', etc.
-        """
         try:
-            # Attempt to store as float if numeric
             self.account_data[key] = float(value)
         except ValueError:
-            # Otherwise, store as string
             self.account_data[key] = value
-        if key == "NetLiquidation":  # Final key in updates
+        if key == "NetLiquidation":
             self.account_data_ready.set()
+
     def position(self, account, contract, pos, avgCost):
-        self.positions[contract.symbol] = {
-            'position': pos,
-            'avg_cost': avgCost
-        }
+        self.positions[contract.symbol] = {'position': pos, 'avg_cost': avgCost}
+
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
         if errorCode in [2104, 2106, 2158]:
-            print(f"INFO: {errorString}")  # Demote to informational message
+            print(f"INFO: {errorString}")
         else:
             print(f"ERROR: Code {errorCode} - {errorString}")
+
+    def tickPrice(self, reqId, tickType, price, attrib):
+        if tickType == 4:  # Last price
+            symbol = self.reqId_to_symbol.get(reqId)
+            if symbol:
+                self.current_prices[symbol] = price
+
+    def historicalData(self, reqId, bar):
+        self.historical_data.append({
+            'date': bar.date,
+            'open': bar.open,
+            'high': bar.high,
+            'low': bar.low,
+            'close': bar.close,
+            'volume': bar.volume
+        })
+
+    def historicalDataEnd(self, reqId, start, end):
+        self.historical_data_ready.set()
 
 class IBKRClient:
     def __init__(self):
@@ -502,61 +545,68 @@ class IBKRClient:
 
     def _connect(self):
         config = load_config()
-        self.conn.connect(
-            config['ibkr']['host'],
-            config['ibkr']['port'],
-            config['ibkr']['client_id']
-        )
-        ib_thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.conn.connect(config['ibkr']['host'], config['ibkr']['port'], config['ibkr']['client_id'])
+        ib_thread = threading.Thread(target=self.conn.run, daemon=True)
         ib_thread.start()
         time.sleep(1)
         self._request_account_data()
 
-    def _run_loop(self):
-        self.conn.run()
-
     def _request_account_data(self):
-        # Request account values & positions
-        # self.conn.reqMarketDataType(3)
         self.conn.reqAccountUpdates(True, "")
         self.conn.reqPositions()
         self.conn.account_data_ready.wait(timeout=10)
 
     def get_account_data(self):
-        """
-        Returns the entire account_data dictionary.
-        """
         return self.conn.account_data
 
     def get_positions(self):
-        """
-        Returns the positions dictionary.
-        """
         return self.conn.positions
 
-    def get_realtime_bars(self, symbol):
-        """
-        Placeholder for real-time bar data retrieval.
-        You would implement TWS API calls here.
-        """
-        # For illustration, returning a mock bar
-        # In production, you'd subscribe to real-time bars from IBKR
-        class Bar:
-            def __init__(self, open, high, low, close, volume):
-                self.open = open
-                self.high = high
-                self.low = low
-                self.close = close
-                self.volume = volume
-        # Generate slightly varying prices
-        close = 200 + random.randint(-5, 5)
-        return [Bar(200.0, 202.0, 198.0, close, 10000)]
+    def subscribe_market_data(self, symbol):
+        if symbol not in self.conn.subscribed_symbols:
+            contract = Contract()
+            contract.symbol = symbol
+            contract.secType = "STK"
+            contract.exchange = "SMART"
+            contract.currency = "USD"
+            reqId = self.conn.reqId
+            self.conn.reqId += 1
+            self.conn.reqMktData(reqId, contract, "", False, False, [])
+            self.conn.reqId_to_symbol[reqId] = symbol
+            self.conn.subscribed_symbols.add(symbol)
 
+    def get_current_price(self, symbol):
+        if symbol not in self.conn.current_prices:
+            self.subscribe_market_data(symbol)
+            time.sleep(1)  # Wait for price update
+        return self.conn.current_prices.get(symbol)
 
-    def _handle_data_farm_disconnect(self):
-        print("Reconnecting to market data...")
-        self._request_account_data()  # Re-request account/positions
-        # Re-subscribe to real-time data streams here
+    def get_historical_data(self, symbol, duration, bar_size):
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        reqId = self.conn.reqId
+        self.conn.reqId += 1
+        self.conn.historical_data = []
+        self.conn.historical_data_ready.clear()
+        self.conn.reqHistoricalData(reqId, contract, "", duration, bar_size, "TRADES", 1, 1, False, [])
+        self.conn.historical_data_ready.wait(timeout=10)
+        return self.conn.historical_data
+
+    def place_order(self, symbol, action, quantity):
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        order = Order()
+        order.action = action
+        order.orderType = "MKT"
+        order.totalQuantity = quantity
+        self.conn.placeOrder(self.conn.next_order_id, contract, order)
+        self.conn.next_order_id += 1
     ```
 
 # code\src\risk_management\adaptive_sizing.py content:
@@ -568,11 +618,10 @@ class AdaptivePositionSizer:
     def __init__(self, volatility_lookback=20):
         self.volatility_lookback = volatility_lookback
         
-    def calculate_size(self, historical_data, current_price):
+    def calculate_fraction(self, historical_data):
         returns = np.diff(np.log(historical_data))
         volatility = np.std(returns[-self.volatility_lookback:])
-        base_size = min(0.2 / (volatility + 1e-8), 0.05)
-        return base_size * current_price  # Adjusted for account size
+        return min(0.2 / (volatility + 1e-8), 0.05)
     ```
 
 # code\src\risk_management\risk_manager.py content:
@@ -590,17 +639,22 @@ class RiskManager:
         account_data = self.ibkr_client.get_account_data()
         positions = self.ibkr_client.get_positions()
         net_liq = account_data.get('NetLiquidation', 0)
-        max_size = self.config['max_position_size'] * net_liq
+        max_position_value = self.config['max_position_size'] * net_liq
         current_position = positions.get(symbol, {}).get('position', 0)
-        order_size = self.sizer.calculate_size(historical_data, current_price)
+        current_position_value = current_position * current_price if current_position > 0 else 0
 
         if action == 'BUY':
-            if account_data.get('AvailableFunds', 0) <= 0 or (current_position + order_size) > max_size:
-                return False
-        if action == 'SELL':
-            if abs(current_position - order_size) > max_size:
-                return False
-        return True
+            position_fraction = self.sizer.calculate_fraction(historical_data)
+            position_value = position_fraction * net_liq
+            shares = int(position_value / current_price)
+            new_position_value = (current_position + shares) * current_price
+            if new_position_value > max_position_value or account_data.get('AvailableFunds', 0) < (shares * current_price):
+                return False, 0
+            return True, shares
+        elif action == 'SELL':
+            if current_position > 0:
+                return True, current_position  # Sell entire position
+            return False, 0
     ```
 
 # code\src\strategies\sma_crossover.py content:
@@ -608,7 +662,7 @@ class RiskManager:
     ```
 import pandas as pd
 import ta
-from .strategy_base import TradingStrategy  # <-- Add this line
+from strategies.strategy_base import TradingStrategy
 
 class SMACrossoverStrategy(TradingStrategy):
     def __init__(self, symbol, exchange, risk_manager, short_period=50, long_period=200):
@@ -618,13 +672,13 @@ class SMACrossoverStrategy(TradingStrategy):
         self.historical_data = pd.DataFrame()
 
     def on_bar(self, bar):
-        self.historical_data = self.historical_data.append({
+        self.historical_data = pd.concat([self.historical_data, pd.DataFrame([{
             'open': bar.open,
             'high': bar.high,
             'low': bar.low,
             'close': bar.close,
             'volume': bar.volume
-        }, ignore_index=True)
+        }])], ignore_index=True)
 
         if len(self.historical_data) > self.long_period:
             self.historical_data['sma_short'] = ta.trend.sma_indicator(
@@ -643,26 +697,20 @@ class SMACrossoverStrategy(TradingStrategy):
 
     def _cross_above(self):
         return (
-            self.historical_data['sma_short'].iloc[-2] <
-            self.historical_data['sma_long'].iloc[-2]
+            self.historical_data['sma_short'].iloc[-2] < self.historical_data['sma_long'].iloc[-2]
         ) and (
-            self.historical_data['sma_short'].iloc[-1] >
-            self.historical_data['sma_long'].iloc[-1]
+            self.historical_data['sma_short'].iloc[-1] > self.historical_data['sma_long'].iloc[-1]
         )
 
     def _cross_below(self):
         return (
-            self.historical_data['sma_short'].iloc[-2] >
-            self.historical_data['sma_long'].iloc[-2]
+            self.historical_data['sma_short'].iloc[-2] > self.historical_data['sma_long'].iloc[-2]
         ) and (
-            self.historical_data['sma_short'].iloc[-1] <
-            self.historical_data['sma_long'].iloc[-1]
+            self.historical_data['sma_short'].iloc[-1] < self.historical_data['sma_long'].iloc[-1]
         )
 
     def _place_order(self, action):
-        """Placeholder for placing an actual IB order."""
         print(f"[DEBUG] Placing {action} order on {self.symbol}.")
-
     ```
 
 # code\src\strategies\strategy_base.py content:
@@ -694,7 +742,7 @@ from openai import OpenAI
 
 class LLMClient:
     def __init__(self, model="gpt-4-1106-preview"):
-        self.client = OpenAI()
+        self.client = OpenAI(api_key="YOUR_OPENAI_API_KEY")  # Replace with your OpenAI API key
         self.model = model
         
     def generate(self, prompt, temperature=0.3):
@@ -709,107 +757,43 @@ class LLMClient:
 # code\src\utils\market_hours.py content:
 
     ```
-# code/src/utils/market_hours.py
-
 from datetime import datetime, time
 import pytz
-from dateutil import parser
 
 class MarketHoursChecker:
     def __init__(self):
-        self.holidays = {  # Basic holiday template (expand as needed)
+        self.holidays = {
             'NorthAmerica': [
-                '2024-01-01',  # New Year's
-                '2024-01-15',  # MLK Day
-                '2024-02-19',  # Presidents Day
-                # Add other NYSE holidays
+                '2024-01-01', '2024-01-15', '2024-02-19'
             ],
             'AsiaHK': [
-                '2024-01-01',  # New Year
-                '2024-02-10',  # Lunar New Year
-                # Add other HKEX holidays
+                '2024-01-01', '2024-02-10'
             ]
         }
         
-    def is_market_open(self, exchange: str) -> bool:
-        """Check if market is open based on exchange and current time."""
-        # Map IBKR exchange codes to regions
-        exchange_region_map = {
-            "SMART": "NorthAmerica",
-            "NYSE": "NorthAmerica",
-            "NASDAQ": "NorthAmerica",
-            "HKEX": "AsiaHK"
-        }
+    def is_market_open(self, exchange):
+        exchange_region_map = {"SMART": "NorthAmerica", "NYSE": "NorthAmerica", "NASDAQ": "NorthAmerica", "HKEX": "AsiaHK"}
         region = exchange_region_map.get(exchange, exchange)
-        if region not in ["NorthAmerica", "AsiaHK"]:
-            raise ValueError(f"Unsupported exchange: {exchange}")
-
         now = datetime.now(pytz.utc)
-
         if region == "NorthAmerica":
             return self._is_nyse_open(now)
         elif region == "AsiaHK":
             return self._is_hkex_open(now)
-        else:
-            return False
+        return False
 
-    def _is_nyse_open(self, dt: datetime) -> bool:
-        """NYSE trading hours 9:30 AM - 4:00 PM ET, Mon-Fri"""
+    def _is_nyse_open(self, dt):
         et = dt.astimezone(pytz.timezone('America/New_York'))
-        
-        # Check weekday
-        if et.weekday() >= 5:  # Saturday(5) or Sunday(6)
+        if et.weekday() >= 5 or et.strftime('%Y-%m-%d') in self.holidays['NorthAmerica']:
             return False
-            
-        # Check holidays
-        date_str = et.strftime('%Y-%m-%d')
-        if date_str in self.holidays['NorthAmerica']:
-            return False
-            
-        # Check time
-        market_open = time(9, 30)
-        market_close = time(16, 0)
+        market_open, market_close = time(9, 30), time(16, 0)
         return market_open <= et.time() <= market_close
 
-    def _is_hkex_open(self, dt: datetime) -> bool:
-        """HKEX trading hours 9:30 AM - 4:00 PM HKT, Mon-Fri"""
+    def _is_hkex_open(self, dt):
         hkt = dt.astimezone(pytz.timezone('Asia/Hong_Kong'))
-        
-        if hkt.weekday() >= 5:
+        if hkt.weekday() >= 5 or hkt.strftime('%Y-%m-%d') in self.holidays['AsiaHK']:
             return False
-            
-        date_str = hkt.strftime('%Y-%m-%d')
-        if date_str in self.holidays['AsiaHK']:
-            return False
-            
-        market_open = time(9, 30)
-        market_close = time(16, 0)
+        market_open, market_close = time(9, 30), time(16, 0)
         return market_open <= hkt.time() <= market_close
-
-    def add_custom_holiday(self, exchange: str, date_str: str):
-        """Add custom holiday dates (YYYY-MM-DD format)"""
-        try:
-            parsed_date = parser.parse(date_str).date()
-            self.holidays[exchange].append(date_str)
-        except ValueError:
-            raise ValueError(f"Invalid date format: {date_str}. Use YYYY-MM-DD")
-    def is_market_open(self, exchange: str) -> bool:
-        # Map IBKR exchange codes to regions
-        exchange_region_map = {
-            "SMART": "NorthAmerica",  # Assuming SMART is used for North American stocks
-            "NYSE": "NorthAmerica",
-            "NASDAQ": "NorthAmerica",
-            "HKEX": "AsiaHK"
-        }
-        region = exchange_region_map.get(exchange, exchange)
-        if region not in ["NorthAmerica", "AsiaHK"]:
-            raise ValueError(f"Unsupported exchange: {exchange}")
-        
-        # Rest of the method remains the same
-        if region == "NorthAmerica":
-            return self._is_nyse_open(now)
-        elif region == "AsiaHK":
-            return self._is_hkex_open(now)
     ```
 
 ```

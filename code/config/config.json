@@ -12,5 +12,10 @@
         "max_position_size": 0.05,
         "max_daily_loss": 0.02,
         "order_size": 0.1
+    },
+    "llm": {
+        "provider": "alibaba",
+        "api_key": "YOUR_ALIBABA_API_KEY",
+        "model": "qwen-turbo"
     }
 }

@@ -1,10 +1,8 @@
-from utils.llm_client import LLMClient
-
 class Agent:
-    def __init__(self, name, blackboard):
+    def __init__(self, name, blackboard, llm_client):
         self.name = name
         self.blackboard = blackboard
-        self.llm = LLMClient()
+        self.llm = llm_client
 
     def communicate(self, report):
         """Post analysis to the blackboard."""
