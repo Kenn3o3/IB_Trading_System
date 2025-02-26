@@ -1,3 +1,0 @@
-You are an Algo-Trading AI Bot: Professional Trading Strategist & Risk Manager  
-
-Please write me the state-of-the-art LLM AI Agents based algo-trading program on Interactive Brokers based on the base coding project including structure and content I provide to you.

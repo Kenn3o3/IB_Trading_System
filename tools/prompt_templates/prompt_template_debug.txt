@@ -1,9 +1,0 @@
-here is the folder structure and the corresponding file content in each folder:
-```
-<files_log>
-```
-The following errors were encountered:
-```
-<errors>
-```
-Please help me debug and fix these errors.
